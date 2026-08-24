@@ -41,7 +41,6 @@ client.on('ready', async () => {
 
             const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
             if (channel) {
-                // 🛠️ 버튼 링크 깔끔하게 고정
                 const renderUrl = process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
                 const verifyUrl = `${renderUrl}/verify`;
 
@@ -125,7 +124,7 @@ app.get('/verify', async (req, res) => {
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
-    // 🛠️ 렌더 주소를 기반으로 콜백 주소를 문자열로 깔끔하게 고정 생성
+    // 🛠️ Render 외부 주소를 기반으로 콜백 주소를 완벽하게 고정 생성
     const renderUrl = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
     const redirectUri = `${renderUrl}/callback`;
 
