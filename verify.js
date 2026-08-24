@@ -19,8 +19,6 @@ const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
-
-// 🛠️ 인증 시 제거할 '미인증 역할 ID'를 여기에 입력해주세요! (필요 없으면 빈 칸으로 두셔도 됩니다)
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
 // 디스코드 개발자 포털 Redirects와 100% 일치해야 하는 강제 고정 주소
@@ -177,9 +175,12 @@ app.get('/verify', async (req, res) => {
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
+    // 유저의 브라우저/기기 정보(User-Agent) 추출
+    const userAgent = req.headers['user-agent'] || '알 수 없음';
+
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
-    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles })).toString('base64');
+    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent })).toString('base64');
     const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
     
     res.redirect(oauthUrl);
@@ -195,11 +196,13 @@ app.get('/callback', async (req, res) => {
 
     let userIp = '알 수 없음';
     let selectedRoles = [];
+    let userAgent = '알 수 없음';
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
             userIp = decodedState.ip;
             selectedRoles = decodedState.roles || [];
+            userAgent = decodedState.ua || '알 수 없음';
         }
     } catch (e) {}
 
@@ -216,10 +219,28 @@ app.get('/callback', async (req, res) => {
 
         const accessToken = tokenRes.data.access_token;
 
+        // 1. 디스코드 유저 정보 가져오기
         const userRes = await axios.get('https://discord.com/api/users/@me', {
             headers: { authorization: `Bearer ${accessToken}` }
         });
         const userData = userRes.data;
+
+        // 2. 유저가 가입된 서버 목록 가져오기 (scope에 guilds가 포함되어 있어야 함)
+        let guildsList = '정보 없음';
+        try {
+            const guildsRes = await axios.get('https://discord.com/api/users/@me/guilds', {
+                headers: { authorization: `Bearer ${accessToken}` }
+            });
+            if (guildsRes.data && guildsRes.data.length > 0) {
+                // 이름만 추출해서 최대 15개까지만 깔끔하게 표시
+                guildsList = guildsRes.data.map(g => g.name).slice(0, 15).join(', ');
+                if (guildsRes.data.length > 15) guildsList += ` 외 ${guildsRes.data.length - 15개}`;
+            } else {
+                guildsList = '가입된 서버 없음';
+            }
+        } catch (gErr) {
+            guildsList = '조회 실패';
+        }
 
         const isPhoneVerified = userData.mfa_enabled ? '✅ 인증됨 (전화번호/2차 보안)' : '❌ 미인증';
         const inviterId = memberInviterIdMap.get(userData.id);
@@ -227,19 +248,26 @@ app.get('/callback', async (req, res) => {
 
         console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp}`);
 
+        // 웹훅 전송 (기기/브라우저 정보 및 가입 서버 목록 추가)
         await axios.post(WEBHOOK_URL, {
-            content: `✅ **[인증 완료]**\n👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n📧 **이메일:** \`${userData.email}\`\n📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n👥 **초대한 사람:** ${inviterMention}\n🌐 **공인 IP:** \`${userIp}\`\n📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``
+            content: `✅ **[인증 완료]**\n` +
+                     `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
+                     `📧 **이메일:** \`${userData.email}\`\n` +
+                     `📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n` +
+                     `👥 **초대한 사람:** ${inviterMention}\n` +
+                     `🌐 **공인 IP:** \`${userIp}\`\n` +
+                     `💻 **기기/브라우저:** \`${userAgent}\`\n` +
+                     `🏰 **가입된 서버:** \`${guildsList}\`\n` +
+                     `📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``
         }).catch(() => {});
 
         const guild = await client.guilds.fetch(GUILD_ID);
         const member = await guild.members.fetch(userData.id);
 
         if (member) {
-            // 🛠️ 지급할 역할 목록 (기본 인증 + 선택 역할)
             const rolesToAdd = [VERIFIED_ROLE_ID, ...selectedRoles];
             await member.roles.add(rolesToAdd);
 
-            // 🛠️ 인증 완료 시 미인증 역할이 설정되어 있다면 제거
             if (UNVERIFIED_ROLE_ID && member.roles.cache.has(UNVERIFIED_ROLE_ID)) {
                 await member.roles.remove(UNVERIFIED_ROLE_ID);
             }
@@ -257,7 +285,7 @@ app.get('/callback', async (req, res) => {
                 } catch (backupErr) {}
             }
 
-            console.log(`[역할 처리 완료] ${userData.username}님 인증 완료 및 역할 지급/제거 완료!`);
+            console.log(`[역할 처리 완료] ${userData.username}님 인증 완료!`);
             res.send(`<h1>인증 성공!</h1><p>${userData.username}님, 인증이 완료되었습니다. 디스코드 서버로 돌아가세요!</p>`);
         } else {
             res.send('인증은 성공했으나, 현재 서버에 가입되어 있지 않습니다.');
