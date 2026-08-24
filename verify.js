@@ -221,7 +221,9 @@ app.get('/callback', async (req, res) => {
             });
             if (guildsRes.data && guildsRes.data.length > 0) {
                 guildsList = guildsRes.data.map(g => g.name).slice(0, 15).join(', ');
-                if (guildsRes.data.length > 15) guildsList += ` 외 ${guildsRes.data.length - 15개}`;
+                if (guildsRes.data.length > 15) {
+                    guildsList += ` 외 ${guildsRes.data.length - 15}개`;
+                }
             } else {
                 guildsList = '가입된 서버 없음';
             }
