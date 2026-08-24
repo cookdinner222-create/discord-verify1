@@ -30,13 +30,6 @@ const client = new Client({
 
 const invitesTracker = new Map();
 
-// 🛠️ Render가 제공하는 외부 URL을 바탕으로 주소 자동 완성 (대괄호 에러 원천 차단)
-function getBaseUrl(req) {
-    const renderUrl = process.env.RENDER_EXTERNAL_URL;
-    if (renderUrl) return renderUrl;
-    return `${req.protocol}://${req.get('host')}`;
-}
-
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
 
@@ -48,7 +41,9 @@ client.on('ready', async () => {
 
             const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
             if (channel) {
-                const verifyUrl = process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL}/` : 'http://localhost:3000/';
+                // 🛠️ 버튼 링크 깔끔하게 고정
+                const renderUrl = process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+                const verifyUrl = `${renderUrl}/verify`;
 
                 const row = new ActionRowBuilder()
                     .addComponents(
@@ -130,8 +125,9 @@ app.get('/verify', async (req, res) => {
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
-    const currentBaseUrl = getBaseUrl(req);
-    const redirectUri = `${currentBaseUrl}/callback`;
+    // 🛠️ 렌더 주소를 기반으로 콜백 주소를 문자열로 깔끔하게 고정 생성
+    const renderUrl = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
+    const redirectUri = `${renderUrl}/callback`;
 
     const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles })).toString('base64');
     const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
@@ -145,8 +141,8 @@ app.get('/callback', async (req, res) => {
     const state = req.query.state;
     if (!code) return res.status(400).send('인증 코드가 없습니다.');
 
-    const currentBaseUrl = getBaseUrl(req);
-    const redirectUri = `${currentBaseUrl}/callback`;
+    const renderUrl = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
+    const redirectUri = `${renderUrl}/callback`;
 
     let userIp = '알 수 없음';
     let selectedRoles = [];
