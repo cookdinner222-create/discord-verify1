@@ -19,7 +19,10 @@ const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
-const REDIRECT_URI = process.env.REDIRECT_URI; 
+
+// 🛠️ 환경 변수에서 가져올 때 혹시 모를 대괄호나 공백을 강제로 싹 제거해 버림
+let REDIRECT_URI = process.env.REDIRECT_URI || '';
+REDIRECT_URI = REDIRECT_URI.replace(/[\[\]]/g, '').trim();
 
 const client = new Client({
     intents: [
@@ -42,7 +45,7 @@ client.on('ready', async () => {
 
             const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
             if (channel) {
-                const verifyUrl = process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
+                const verifyUrl = process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL}/` : 'http://localhost:3000/';
 
                 const row = new ActionRowBuilder()
                     .addComponents(
@@ -95,7 +98,7 @@ client.on('guildMemberAdd', async (member) => {
     }
 });
 
-// 1. 인증 시작 (공유서버 IP 문제 해결: 진짜 유저 IP만 다이렉트 추출)
+// 1. 인증 시작
 app.get('/verify', async (req, res) => {
     let userIp = req.headers['x-forwarded-for'] 
         ? req.headers['x-forwarded-for'].split(',')[0].trim() 
