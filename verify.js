@@ -1,11 +1,14 @@
 const express = require('express');
+const path = require('path');
 const axios = require('axios');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const app = express();
 
-// ===================== [환경 변수 설정 영역] =====================
-// 코드가 아니라 Render 사이트의 설정(Environment Variables)에서 불러오는 방식입니다!
+// 🛠️ 렌더 경로 에러(Not Found) 원천 차단
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 환경 변수 연동
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -16,11 +19,7 @@ const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
-
-const REDIRECT_URI = process.env.REDIRECT_URI; // 예: https://너의앱이름.onrender.com/callback
-// ============================================================
-
-app.use(express.static('public'));
+const REDIRECT_URI = process.env.REDIRECT_URI; 
 
 const client = new Client({
     intents: [
@@ -96,8 +95,8 @@ client.on('guildMemberAdd', async (member) => {
     }
 });
 
-// 1. 인증 시작
-// 1. 유저의 진짜 공인 IP를 정확하게 가져오는 로직 (클라우드 프록시 헤더 완벽 대응)
+// 1. 인증 시작 (유저 진짜 IP 정확 추출 + 안전한 VPN 검사)
+app.get('/verify', async (req, res) => {
     let userIp = '알 수 없음';
     const rawIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket.remoteAddress || '';
     
@@ -105,7 +104,6 @@ client.on('guildMemberAdd', async (member) => {
         userIp = rawIp.includes(',') ? rawIp.split(',')[0].trim() : rawIp.trim();
     }
 
-    // 만약 로컬이거나 IPv6 루프백 주소면 외부 API로 공인 IP 보정
     if (userIp === '::1' || userIp === '127.0.0.1' || !userIp) {
         try {
             const externalIpRes = await axios.get('https://api.ipify.org?format=json');
@@ -113,7 +111,6 @@ client.on('guildMemberAdd', async (member) => {
         } catch (e) {}
     }
 
-    // 2. 정확하게 추출된 유저 IP로만 VPN/우회 검사 수행
     try {
         const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query`);
         
@@ -129,6 +126,15 @@ client.on('guildMemberAdd', async (member) => {
     } catch (err) {
         console.error('IP 검사 에러:', err.message);
     }
+
+    let selectedRoles = req.query.roles || [];
+    if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
+
+    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles })).toString('base64');
+    const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
+    
+    res.redirect(oauthUrl);
+});
 
 // 2. 콜백 처리
 app.get('/callback', async (req, res) => {
