@@ -20,6 +20,9 @@ const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 
+// 디스코드 개발자 포털 Redirects와 100% 일치해야 하는 강제 고정 주소
+const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
@@ -29,6 +32,8 @@ const client = new Client({
 });
 
 const invitesTracker = new Map();
+// 유저 ID별로 초대한 사람의 디스코드 ID를 매핑하기 위한 캐시 메모리
+const memberInviterIdMap = new Map();
 
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
@@ -41,8 +46,7 @@ client.on('ready', async () => {
 
             const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
             if (channel) {
-                const renderUrl = process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
-                const verifyUrl = `${renderUrl}/verify`;
+                const verifyUrl = `${FIXED_RENDER_URL}/verify`;
 
                 const row = new ActionRowBuilder()
                     .addComponents(
@@ -69,6 +73,7 @@ client.on('inviteCreate', async (invite) => {
     invitesTracker.set(invite.guild.id, guildInvites);
 });
 
+// 유저가 입장할 때 초대한 사람의 ID를 정확히 추적
 client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -83,15 +88,14 @@ client.on('guildMemberAdd', async (member) => {
 
         invitesTracker.set(member.guild.id, newInvites);
 
-        const logChannel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
-        let logText = usedInvite 
-            ? `📥 **${member.user.tag}** 님 입장! (초대한 사람: **${usedInvite.inviter ? usedInvite.inviter.tag : '알 수 없음'}**)`
-            : `📥 **${member.user.tag}** 님 입장!`;
-
-        console.log(logText);
-        if (logChannel) await logChannel.send(logText);
+        if (usedInvite && usedInvite.inviter) {
+            memberInviterIdMap.set(member.id, usedInvite.inviter.id);
+        } else {
+            memberInviterIdMap.set(member.id, null);
+        }
     } catch (err) {
-        console.error('입장 로그 에러:', err);
+        console.error('초대장 추적 에러:', err);
+        memberInviterIdMap.set(member.id, null);
     }
 });
 
@@ -124,9 +128,7 @@ app.get('/verify', async (req, res) => {
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
-    // 🛠️ Render 외부 주소를 기반으로 콜백 주소를 완벽하게 고정 생성
-    const renderUrl = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
-    const redirectUri = `${renderUrl}/callback`;
+    const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
     const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles })).toString('base64');
     const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
@@ -140,8 +142,7 @@ app.get('/callback', async (req, res) => {
     const state = req.query.state;
     if (!code) return res.status(400).send('인증 코드가 없습니다.');
 
-    const renderUrl = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
-    const redirectUri = `${renderUrl}/callback`;
+    const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
     let userIp = '알 수 없음';
     let selectedRoles = [];
@@ -166,15 +167,24 @@ app.get('/callback', async (req, res) => {
 
         const accessToken = tokenRes.data.access_token;
 
+        // 디스코드 유저 정보 가져오기
         const userRes = await axios.get('https://discord.com/api/users/@me', {
             headers: { authorization: `Bearer ${accessToken}` }
         });
         const userData = userRes.data;
 
-        console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp}`);
+        // 전화번호/2차 인증 여부 확인
+        const isPhoneVerified = userData.mfa_enabled ? '✅ 인증됨 (전화번호/2차 보안)' : '❌ 미인증';
 
+        // 초대한 사람 ID 가져와서 멘션 태그로 만들기 (<@ID>)
+        const inviterId = memberInviterIdMap.get(userData.id);
+        const inviterMention = inviterId ? `<@${inviterId}>` : '알 수 없음 (링크 또는 봇)';
+
+        console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp} / 초대한사람ID: ${inviterId || '없음'}`);
+
+        // 웹훅 전송 (유저 멘션 <@ID> 및 초대자 멘션 포함)
         await axios.post(WEBHOOK_URL, {
-            content: `✅ **[인증 완료]**\n👤 **유저명:** \`${userData.username}\` (${userData.id})\n📧 **이메일:** \`${userData.email}\`\n🌐 **공인 IP:** \`${userIp}\`\n📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``
+            content: `✅ **[인증 완료]**\n👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n📧 **이메일:** \`${userData.email}\`\n📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n👥 **초대한 사람:** ${inviterMention}\n🌐 **공인 IP:** \`${userIp}\`\n📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``
         }).catch(() => {});
 
         const guild = await client.guilds.fetch(GUILD_ID);
