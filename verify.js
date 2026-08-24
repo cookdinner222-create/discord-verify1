@@ -97,17 +97,23 @@ client.on('guildMemberAdd', async (member) => {
 });
 
 // 1. 인증 시작
-app.get('/verify', async (req, res) => {
+// 1. 유저의 진짜 공인 IP를 정확하게 가져오는 로직 (클라우드 프록시 헤더 완벽 대응)
     let userIp = '알 수 없음';
-
-    try {
-        const externalIpRes = await axios.get('https://api.ipify.org?format=json');
-        userIp = externalIpRes.data.ip;
-    } catch (e) {
-        let rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const rawIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket.remoteAddress || '';
+    
+    if (rawIp) {
         userIp = rawIp.includes(',') ? rawIp.split(',')[0].trim() : rawIp.trim();
     }
 
+    // 만약 로컬이거나 IPv6 루프백 주소면 외부 API로 공인 IP 보정
+    if (userIp === '::1' || userIp === '127.0.0.1' || !userIp) {
+        try {
+            const externalIpRes = await axios.get('https://api.ipify.org?format=json');
+            userIp = externalIpRes.data.ip;
+        } catch (e) {}
+    }
+
+    // 2. 정확하게 추출된 유저 IP로만 VPN/우회 검사 수행
     try {
         const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query`);
         
@@ -123,15 +129,6 @@ app.get('/verify', async (req, res) => {
     } catch (err) {
         console.error('IP 검사 에러:', err.message);
     }
-
-    let selectedRoles = req.query.roles || [];
-    if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
-
-    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles })).toString('base64');
-    const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
-    
-    res.redirect(oauthUrl);
-});
 
 // 2. 콜백 처리
 app.get('/callback', async (req, res) => {
