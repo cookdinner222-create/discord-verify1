@@ -5,10 +5,8 @@ const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle 
 
 const app = express();
 
-// 렌더 경로 에러(Not Found) 방지
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 환경 변수 연동
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -21,7 +19,6 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-// 디스코드 개발자 포털 Redirects와 100% 일치해야 하는 강제 고정 주소
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
 const client = new Client({
@@ -75,7 +72,6 @@ client.on('inviteCreate', async (invite) => {
     invitesTracker.set(invite.guild.id, guildInvites);
 });
 
-// 유저가 입장할 때 초대한 사람의 ID를 정확히 추적
 client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -101,7 +97,6 @@ client.on('guildMemberAdd', async (member) => {
     }
 });
 
-// 🚪 유저가 서버를 나갈 때 퇴장 로그 전송
 client.on('guildMemberRemove', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -117,7 +112,6 @@ client.on('guildMemberRemove', async (member) => {
     }
 });
 
-// 💬 명령어 감지: !역할제거 입력 시 추가 선택 역할 제거
 client.on('messageCreate', async (message) => {
     if (message.guild?.id !== GUILD_ID) return;
     if (message.author.bot) return;
@@ -128,7 +122,7 @@ client.on('messageCreate', async (message) => {
             if (!member) return;
 
             const removableRoleIds = [
-                '1541423418753155135' // 📢 공지 알림 받기 역할 ID
+                '1541423418753155135'
             ];
 
             const rolesToRemove = member.roles.cache.filter(role => removableRoleIds.includes(role.id));
@@ -146,7 +140,6 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// 1. 인증 시작
 app.get('/verify', async (req, res) => {
     let userIp = req.headers['x-forwarded-for'] 
         ? req.headers['x-forwarded-for'].split(',')[0].trim() 
@@ -175,9 +168,7 @@ app.get('/verify', async (req, res) => {
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
-    // 유저의 브라우저/기기 정보(User-Agent) 추출
     const userAgent = req.headers['user-agent'] || '알 수 없음';
-
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
     const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent })).toString('base64');
@@ -186,7 +177,6 @@ app.get('/verify', async (req, res) => {
     res.redirect(oauthUrl);
 });
 
-// 2. 콜백 처리
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
     const state = req.query.state;
@@ -219,20 +209,17 @@ app.get('/callback', async (req, res) => {
 
         const accessToken = tokenRes.data.access_token;
 
-        // 1. 디스코드 유저 정보 가져오기
         const userRes = await axios.get('https://discord.com/api/users/@me', {
             headers: { authorization: `Bearer ${accessToken}` }
         });
         const userData = userRes.data;
 
-        // 2. 유저가 가입된 서버 목록 가져오기 (scope에 guilds가 포함되어 있어야 함)
         let guildsList = '정보 없음';
         try {
             const guildsRes = await axios.get('https://discord.com/api/users/@me/guilds', {
                 headers: { authorization: `Bearer ${accessToken}` }
             });
             if (guildsRes.data && guildsRes.data.length > 0) {
-                // 이름만 추출해서 최대 15개까지만 깔끔하게 표시
                 guildsList = guildsRes.data.map(g => g.name).slice(0, 15).join(', ');
                 if (guildsRes.data.length > 15) guildsList += ` 외 ${guildsRes.data.length - 15개}`;
             } else {
@@ -248,7 +235,6 @@ app.get('/callback', async (req, res) => {
 
         console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp}`);
 
-        // 웹훅 전송 (기기/브라우저 정보 및 가입 서버 목록 추가)
         await axios.post(WEBHOOK_URL, {
             content: `✅ **[인증 완료]**\n` +
                      `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
