@@ -20,10 +20,6 @@ const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 
-// 🛠️ 환경 변수에서 가져올 때 혹시 모를 대괄호나 공백을 강제로 싹 제거해 버림
-let REDIRECT_URI = process.env.REDIRECT_URI || '';
-REDIRECT_URI = REDIRECT_URI.replace(/[\[\]]/g, '').trim();
-
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
@@ -33,6 +29,13 @@ const client = new Client({
 });
 
 const invitesTracker = new Map();
+
+// 🛠️ Render가 제공하는 외부 URL을 바탕으로 주소 자동 완성 (대괄호 에러 원천 차단)
+function getBaseUrl(req) {
+    const renderUrl = process.env.RENDER_EXTERNAL_URL;
+    if (renderUrl) return renderUrl;
+    return `${req.protocol}://${req.get('host')}`;
+}
 
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
@@ -127,8 +130,11 @@ app.get('/verify', async (req, res) => {
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
+    const currentBaseUrl = getBaseUrl(req);
+    const redirectUri = `${currentBaseUrl}/callback`;
+
     const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles })).toString('base64');
-    const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
+    const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
     
     res.redirect(oauthUrl);
 });
@@ -138,6 +144,9 @@ app.get('/callback', async (req, res) => {
     const code = req.query.code;
     const state = req.query.state;
     if (!code) return res.status(400).send('인증 코드가 없습니다.');
+
+    const currentBaseUrl = getBaseUrl(req);
+    const redirectUri = `${currentBaseUrl}/callback`;
 
     let userIp = '알 수 없음';
     let selectedRoles = [];
@@ -155,7 +164,7 @@ app.get('/callback', async (req, res) => {
             client_secret: CLIENT_SECRET,
             grant_type: 'authorization_code',
             code: code,
-            redirect_uri: REDIRECT_URI,
+            redirect_uri: redirectUri,
         }), {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
