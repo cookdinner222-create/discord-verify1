@@ -112,11 +112,15 @@ client.on('guildMemberRemove', async (member) => {
     }
 });
 
+// 💬 명령어 감지: !역할제거 및 !서버복구 처리
 client.on('messageCreate', async (message) => {
     if (message.guild?.id !== GUILD_ID) return;
     if (message.author.bot) return;
 
-    if (message.content.trim() === '!역할제거') {
+    const content = message.content.trim();
+
+    // 1. !역할제거 명령어
+    if (content === '!역할제거') {
         try {
             const member = message.member;
             if (!member) return;
@@ -136,6 +140,51 @@ client.on('messageCreate', async (message) => {
         } catch (err) {
             console.error('역할 제거 명령어 에러:', err);
             message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
+        }
+    }
+
+    // 2. !서버복구 명령어 (인증된 유저가 백업 서버에 입장할 수 있는 초대 링크 생성)
+    if (content === '!서버복구') {
+        try {
+            const member = message.member;
+            if (!member) return;
+
+            // 기본 인증 역할(VERIFIED_ROLE_ID)을 가지고 있는지 확인
+            if (!member.roles.cache.has(VERIFIED_ROLE_ID)) {
+                return message.reply('❌ 인증을 완료한 유저만 복구 서버 링크를 받을 수 있습니다!');
+            }
+
+            if (!BACKUP_GUILD_ID) {
+                return message.reply('⚠️ 설정된 백업(복구) 서버가 없습니다.');
+            }
+
+            // 백업 서버 객체 가져오기
+            const backupGuild = client.guilds.cache.get(BACKUP_GUILD_ID);
+            if (!backupGuild) {
+                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다. (봇이 복구 서버에 들어와 있는지 확인해 주세요)');
+            }
+
+            // 복구 서버의 채널 중 초대장을 만들 수 있는 첫 번째 채널 찾기
+            const inviteChannel = backupGuild.channels.cache.find(c => c.type === 0 && c.permissionsFor(backupGuild.members.me).has('CreateInstantInvite'));
+            
+            if (!inviteChannel) {
+                return message.reply('⚠️ 복구 서버에 초대장을 생성할 권한이 없습니다.');
+            }
+
+            // 1회용, 5분 뒤 만료되는 초대 링크 생성
+            const invite = await inviteChannel.createInvite({
+                maxUses: 1,
+                maxAge: 300,
+                unique: true
+            });
+
+            // 명령어 친 유저에게 개인 메시지(DM)로 링크 전송
+            await message.author.send(`🚨 **[서버 복구 링크]**\n요청하신 복구 서버 초대 링크입니다. (5분 내 1회만 사용 가능):\nhttps://discord.gg/${invite.code}`).catch(() => {});
+            
+            message.reply('✅ 복구 서버 초대 링크를 DM(개인 메시지)으로 보내드렸습니다!');
+        } catch (err) {
+            console.error('서버복구 명령어 에러:', err);
+            message.reply('⚠️ 복구 링크를 생성하는 중 오류가 발생했습니다.');
         }
     }
 });
@@ -184,7 +233,7 @@ app.get('/callback', async (req, res) => {
 
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
-    let userIp = '알 수 없음';
+    let userIp = '알 S 없음';
     let selectedRoles = [];
     let userAgent = '알 수 없음';
     try {
