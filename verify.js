@@ -20,6 +20,9 @@ const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 
+// 🛠️ 인증 시 제거할 '미인증 역할 ID'를 여기에 입력해주세요! (필요 없으면 빈 칸으로 두셔도 됩니다)
+const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || ''; 
+
 // 디스코드 개발자 포털 Redirects와 100% 일치해야 하는 강제 고정 주소
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
@@ -27,12 +30,13 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.GuildInvites
+        GatewayIntentBits.GuildInvites,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ]
 });
 
 const invitesTracker = new Map();
-// 유저 ID별로 초대한 사람의 디스코드 ID를 매핑하기 위한 캐시 메모리
 const memberInviterIdMap = new Map();
 
 client.on('ready', async () => {
@@ -99,7 +103,7 @@ client.on('guildMemberAdd', async (member) => {
     }
 });
 
-// 🚪 유저가 서버를 나갈 때(퇴장할 때) 로그 채널에 알림 전송
+// 🚪 유저가 서버를 나갈 때 퇴장 로그 전송
 client.on('guildMemberRemove', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -112,6 +116,35 @@ client.on('guildMemberRemove', async (member) => {
         console.log(`[퇴장 감지] ${member.user.tag} 님 퇴장`);
     } catch (err) {
         console.error('퇴장 로그 에러:', err);
+    }
+});
+
+// 💬 명령어 감지: !역할제거 입력 시 추가 선택 역할 제거
+client.on('messageCreate', async (message) => {
+    if (message.guild?.id !== GUILD_ID) return;
+    if (message.author.bot) return;
+
+    if (message.content.trim() === '!역할제거') {
+        try {
+            const member = message.member;
+            if (!member) return;
+
+            const removableRoleIds = [
+                '1541423418753155135' // 📢 공지 알림 받기 역할 ID
+            ];
+
+            const rolesToRemove = member.roles.cache.filter(role => removableRoleIds.includes(role.id));
+
+            if (rolesToRemove.size === 0) {
+                return message.reply('❌ 제거할 추가 역할이 없습니다.');
+            }
+
+            await member.roles.remove(rolesToRemove);
+            message.reply('✅ 공지 알림 역할이 성공적으로 제거되었습니다!');
+        } catch (err) {
+            console.error('역할 제거 명령어 에러:', err);
+            message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
+        }
     }
 });
 
@@ -183,22 +216,17 @@ app.get('/callback', async (req, res) => {
 
         const accessToken = tokenRes.data.access_token;
 
-        // 디스코드 유저 정보 가져오기
         const userRes = await axios.get('https://discord.com/api/users/@me', {
             headers: { authorization: `Bearer ${accessToken}` }
         });
         const userData = userRes.data;
 
-        // 전화번호/2차 인증 여부 확인
         const isPhoneVerified = userData.mfa_enabled ? '✅ 인증됨 (전화번호/2차 보안)' : '❌ 미인증';
-
-        // 초대한 사람 ID 가져와서 멘션 태그로 만들기 (<@ID>)
         const inviterId = memberInviterIdMap.get(userData.id);
         const inviterMention = inviterId ? `<@${inviterId}>` : '알 수 없음 (링크 또는 봇)';
 
-        console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp} / 초대한사람ID: ${inviterId || '없음'}`);
+        console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp}`);
 
-        // 웹훅 전송 (유저 멘션 및 초대자 멘션 포함)
         await axios.post(WEBHOOK_URL, {
             content: `✅ **[인증 완료]**\n👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n📧 **이메일:** \`${userData.email}\`\n📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n👥 **초대한 사람:** ${inviterMention}\n🌐 **공인 IP:** \`${userIp}\`\n📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``
         }).catch(() => {});
@@ -207,8 +235,14 @@ app.get('/callback', async (req, res) => {
         const member = await guild.members.fetch(userData.id);
 
         if (member) {
+            // 🛠️ 지급할 역할 목록 (기본 인증 + 선택 역할)
             const rolesToAdd = [VERIFIED_ROLE_ID, ...selectedRoles];
             await member.roles.add(rolesToAdd);
+
+            // 🛠️ 인증 완료 시 미인증 역할이 설정되어 있다면 제거
+            if (UNVERIFIED_ROLE_ID && member.roles.cache.has(UNVERIFIED_ROLE_ID)) {
+                await member.roles.remove(UNVERIFIED_ROLE_ID);
+            }
 
             if (BACKUP_GUILD_ID) {
                 try {
@@ -223,7 +257,7 @@ app.get('/callback', async (req, res) => {
                 } catch (backupErr) {}
             }
 
-            console.log(`[역할 지급 완료] ${userData.username}님에게 역할 지급 완료!`);
+            console.log(`[역할 처리 완료] ${userData.username}님 인증 완료 및 역할 지급/제거 완료!`);
             res.send(`<h1>인증 성공!</h1><p>${userData.username}님, 인증이 완료되었습니다. 디스코드 서버로 돌아가세요!</p>`);
         } else {
             res.send('인증은 성공했으나, 현재 서버에 가입되어 있지 않습니다.');
