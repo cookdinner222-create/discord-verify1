@@ -21,7 +21,7 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 
 // 🛠️ 인증 시 제거할 '미인증 역할 ID'를 여기에 입력해주세요! (필요 없으면 빈 칸으로 두셔도 됩니다)
-const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || ''; 
+const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
 // 디스코드 개발자 포털 Redirects와 100% 일치해야 하는 강제 고정 주소
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
