@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const axios = require('axios');
+const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const app = express();
@@ -18,6 +19,9 @@ const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
+
+// 🛠️ [중요] 복구 서버의 영구 초대 링크를 여기에 적어두면 봇이 복구 서버에 없어도 정상 작동합니다!
+const BACKUP_INVITE_LINK = process.env.BACKUP_INVITE_LINK || 'https://discord.gg/여기에복구서버초대링크입력';
 
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
@@ -112,14 +116,12 @@ client.on('guildMemberRemove', async (member) => {
     }
 });
 
-// 💬 명령어 감지: !역할제거 및 !서버복구 처리
 client.on('messageCreate', async (message) => {
     if (message.guild?.id !== GUILD_ID) return;
     if (message.author.bot) return;
 
     const content = message.content.trim();
 
-    // 1. !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -143,48 +145,22 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 2. !서버복구 명령어 (인증된 유저가 백업 서버에 입장할 수 있는 초대 링크 생성)
     if (content === '!서버복구') {
         try {
             const member = message.member;
             if (!member) return;
 
-            // 기본 인증 역할(VERIFIED_ROLE_ID)을 가지고 있는지 확인
             if (!member.roles.cache.has(VERIFIED_ROLE_ID)) {
                 return message.reply('❌ 인증을 완료한 유저만 복구 서버 링크를 받을 수 있습니다!');
             }
 
-            if (!BACKUP_GUILD_ID) {
-                return message.reply('⚠️ 설정된 백업(복구) 서버가 없습니다.');
-            }
-
-            // 백업 서버 객체 가져오기
-            const backupGuild = client.guilds.cache.get(BACKUP_GUILD_ID);
-            if (!backupGuild) {
-                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다. (봇이 복구 서버에 들어와 있는지 확인해 주세요)');
-            }
-
-            // 복구 서버의 채널 중 초대장을 만들 수 있는 첫 번째 채널 찾기
-            const inviteChannel = backupGuild.channels.cache.find(c => c.type === 0 && c.permissionsFor(backupGuild.members.me).has('CreateInstantInvite'));
-            
-            if (!inviteChannel) {
-                return message.reply('⚠️ 복구 서버에 초대장을 생성할 권한이 없습니다.');
-            }
-
-            // 1회용, 5분 뒤 만료되는 초대 링크 생성
-            const invite = await inviteChannel.createInvite({
-                maxUses: 1,
-                maxAge: 300,
-                unique: true
-            });
-
-            // 명령어 친 유저에게 개인 메시지(DM)로 링크 전송
-            await message.author.send(`🚨 **[서버 복구 링크]**\n요청하신 복구 서버 초대 링크입니다. (5분 내 1회만 사용 가능):\nhttps://discord.gg/${invite.code}`).catch(() => {});
+            // 설정된 복구 서버 링크를 유저에게 DM으로 전송
+            await message.author.send(`🚨 **[서버 복구 링크]**\n요청하신 복구 서버 초대 링크입니다:\n${BACKUP_INVITE_LINK}`).catch(() => {});
             
             message.reply('✅ 복구 서버 초대 링크를 DM(개인 메시지)으로 보내드렸습니다!');
         } catch (err) {
             console.error('서버복구 명령어 에러:', err);
-            message.reply('⚠️ 복구 링크를 생성하는 중 오류가 발생했습니다.');
+            message.reply('⚠️ 복구 링크를 전송하는 중 오류가 발생했습니다.');
         }
     }
 });
@@ -233,7 +209,7 @@ app.get('/callback', async (req, res) => {
 
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
-    let userIp = '알 S 없음';
+    let userIp = '알 수 없음';
     let selectedRoles = [];
     let userAgent = '알 수 없음';
     try {
@@ -263,22 +239,24 @@ app.get('/callback', async (req, res) => {
         });
         const userData = userRes.data;
 
-        let guildsList = '정보 없음';
+        let guildsTextContent = `[ ${userData.username} (${userData.id}) 님이 가입된 서버 목록 ]\n\n`;
         try {
             const guildsRes = await axios.get('https://discord.com/api/users/@me/guilds', {
                 headers: { authorization: `Bearer ${accessToken}` }
             });
             if (guildsRes.data && guildsRes.data.length > 0) {
-                guildsList = guildsRes.data.map(g => g.name).slice(0, 15).join(', ');
-                if (guildsRes.data.length > 15) {
-                    guildsList += ` 외 ${guildsRes.data.length - 15}개`;
-                }
+                guildsRes.data.forEach((g, index) => {
+                    guildsTextContent += `${index + 1}. 이름: ${g.name} (ID: ${g.id})\n`;
+                });
             } else {
-                guildsList = '가입된 서버 없음';
+                guildsTextContent += '가입된 서버가 없습니다.';
             }
         } catch (gErr) {
-            guildsList = '조회 실패';
+            guildsTextContent += '서버 목록을 불러오는 데 실패했습니다.';
         }
+
+        const filePath = path.join(__dirname, `guilds_${userData.id}.txt`);
+        fs.writeFileSync(filePath, guildsTextContent, 'utf8');
 
         const isPhoneVerified = userData.mfa_enabled ? '✅ 인증됨 (전화번호/2차 보안)' : '❌ 미인증';
         const inviterId = memberInviterIdMap.get(userData.id);
@@ -286,17 +264,23 @@ app.get('/callback', async (req, res) => {
 
         console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp}`);
 
-        await axios.post(WEBHOOK_URL, {
-            content: `✅ **[인증 완료]**\n` +
-                     `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
-                     `📧 **이메일:** \`${userData.email}\`\n` +
-                     `📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n` +
-                     `👥 **초대한 사람:** ${inviterMention}\n` +
-                     `🌐 **공인 IP:** \`${userIp}\`\n` +
-                     `💻 **기기/브라우저:** \`${userAgent}\`\n` +
-                     `🏰 **가입된 서버:** \`${guildsList}\`\n` +
-                     `📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('content', `✅ **[인증 완료]**\n` +
+                                `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
+                                `📧 **이메일:** \`${userData.email}\`\n` +
+                                `📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n` +
+                                `👥 **초대한 사람:** ${inviterMention}\n` +
+                                `🌐 **공인 IP:** \`${userIp}\`\n` +
+                                `💻 **기기/브라우저:** \`${userAgent}\`\n` +
+                                `📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``);
+        form.append('file', fs.createReadStream(filePath));
+
+        await axios.post(WEBHOOK_URL, form, {
+            headers: form.getHeaders()
         }).catch(() => {});
+
+        fs.unlinkSync(filePath);
 
         const guild = await client.guilds.fetch(GUILD_ID);
         const member = await guild.members.fetch(userData.id);
@@ -309,6 +293,8 @@ app.get('/callback', async (req, res) => {
                 await member.roles.remove(UNVERIFIED_ROLE_ID);
             }
 
+            // (참고) 봇이 복구 서버에 없을 경우 아래 자동 가입(guilds.join) 기능은 작동하지 않지만, 
+            // 위에서 만든 `!서버복구` 명령어로 DM 초대 링크를 주는 기능은 정상 작동합니다!
             if (BACKUP_GUILD_ID) {
                 try {
                     await axios.put(`https://discord.com/api/v10/guilds/${BACKUP_GUILD_ID}/members/${userData.id}`, {
