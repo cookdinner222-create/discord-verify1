@@ -99,6 +99,22 @@ client.on('guildMemberAdd', async (member) => {
     }
 });
 
+// 🚪 유저가 서버를 나갈 때(퇴장할 때) 로그 채널에 알림 전송
+client.on('guildMemberRemove', async (member) => {
+    if (member.guild.id !== GUILD_ID) return;
+
+    try {
+        const logChannel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
+        if (logChannel) {
+            const exitText = `📤 **<@${member.id}>** (\`${member.user.username}\`) 님께서 서버를 나가셨습니다.`;
+            await logChannel.send(exitText);
+        }
+        console.log(`[퇴장 감지] ${member.user.tag} 님 퇴장`);
+    } catch (err) {
+        console.error('퇴장 로그 에러:', err);
+    }
+});
+
 // 1. 인증 시작
 app.get('/verify', async (req, res) => {
     let userIp = req.headers['x-forwarded-for'] 
@@ -182,7 +198,7 @@ app.get('/callback', async (req, res) => {
 
         console.log(`[인증 성공] ${userData.username} (${userData.email}) / IP: ${userIp} / 초대한사람ID: ${inviterId || '없음'}`);
 
-        // 웹훅 전송 (유저 멘션 <@ID> 및 초대자 멘션 포함)
+        // 웹훅 전송 (유저 멘션 및 초대자 멘션 포함)
         await axios.post(WEBHOOK_URL, {
             content: `✅ **[인증 완료]**\n👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n📧 **이메일:** \`${userData.email}\`\n📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n👥 **초대한 사람:** ${inviterMention}\n🌐 **공인 IP:** \`${userIp}\`\n📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``
         }).catch(() => {});
