@@ -5,7 +5,7 @@ const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle 
 
 const app = express();
 
-// 🛠️ 렌더 경로 에러(Not Found) 원천 차단
+// 렌더 경로 에러(Not Found) 방지
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 환경 변수 연동
@@ -95,20 +95,14 @@ client.on('guildMemberAdd', async (member) => {
     }
 });
 
-// 1. 인증 시작 (유저 진짜 IP 정확 추출 + 안전한 VPN 검사)
+// 1. 인증 시작 (공유서버 IP 문제 해결: 진짜 유저 IP만 다이렉트 추출)
 app.get('/verify', async (req, res) => {
-    let userIp = '알 수 없음';
-    const rawIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket.remoteAddress || '';
-    
-    if (rawIp) {
-        userIp = rawIp.includes(',') ? rawIp.split(',')[0].trim() : rawIp.trim();
-    }
+    let userIp = req.headers['x-forwarded-for'] 
+        ? req.headers['x-forwarded-for'].split(',')[0].trim() 
+        : req.socket.remoteAddress;
 
-    if (userIp === '::1' || userIp === '127.0.0.1' || !userIp) {
-        try {
-            const externalIpRes = await axios.get('https://api.ipify.org?format=json');
-            userIp = externalIpRes.data.ip;
-        } catch (e) {}
+    if (!userIp || userIp === '::1' || userIp === '127.0.0.1') {
+        userIp = '127.0.0.1';
     }
 
     try {
