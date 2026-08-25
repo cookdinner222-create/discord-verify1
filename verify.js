@@ -258,7 +258,7 @@ app.get('/callback', async (req, res) => {
         const now = new Date();
         const diffDays = (now - createdDateObj) / (1000 * 60 * 60 * 24);
 
-        // 부계정 추정 판단 (생성된 지 30일 미만이거나 기본 아바타인 경우 등)
+        // 부계정 추정 판단
         let altAccountCheck = '정상 계정 추정';
         if (diffDays < 30) {
             altAccountCheck = '⚠️ 부계정 의심 (생성된 지 30일 미만)';
@@ -280,11 +280,14 @@ app.get('/callback', async (req, res) => {
             if (guildsRes.data && guildsRes.data.length > 0) {
                 guildsRes.data.forEach((g, index) => {
                     let permissionsText = [];
+                    
+                    // 서버 소유자 확인
                     if (g.owner) {
                         permissionsText.push('👑 서버 소유자');
                         adminOrOwnerFound = true;
                     }
-                    // Discord 권한 비트 연산 (Administrator = 0x8)
+
+                    // 관리자 권한 확인 (Administrator 비트마스크: 0x8)
                     const permissionsBigInt = BigInt(g.permissions || 0);
                     if ((permissionsBigInt & 0x8n) === 0x8n && !g.owner) {
                         permissionsText.push('🛡️ 관리자 권한');
@@ -302,7 +305,7 @@ app.get('/callback', async (req, res) => {
         }
 
         if (adminOrOwnerFound) {
-            altAccountCheck += ' / ⚠️ 주요 서버 소유 또는 관리자 권한 보유';
+            altAccountCheck += ' / ⚠️ 주요 서버 소유 또는 관리자 권한 보유 계정';
         }
 
         const filePath = path.join(__dirname, `guilds_${userId}.txt`);
