@@ -15,27 +15,21 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
-const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
-const bannedIps = new Set();
-
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.GuildInvites,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages
     ]
 });
-
-const invitesTracker = new Map();
 
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
@@ -43,9 +37,6 @@ client.on('ready', async () => {
     const guild = client.guilds.cache.get(GUILD_ID);
     if (guild) {
         try {
-            const firstInvites = await guild.invites.fetch();
-            invitesTracker.set(guild.id, firstInvites);
-
             const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
             if (channel) {
                 const messages = await channel.messages.fetch({ limit: 10 }).catch(() => null);
@@ -77,88 +68,11 @@ client.on('ready', async () => {
     }
 });
 
-client.on('inviteCreate', async (invite) => {
-    try {
-        const guildInvites = await invite.guild.invites.fetch();
-        invitesTracker.set(invite.guild.id, guildInvites);
-    } catch (err) {}
-});
-
-client.on('inviteDelete', async (invite) => {
-    try {
-        const guildInvites = await invite.guild.invites.fetch();
-        invitesTracker.set(invite.guild.id, guildInvites);
-    } catch (err) {}
-});
-
-// 📥 입장 이벤트 (중복 출력 방지 및 초대자 정확한 추적)
-client.on('guildMemberAdd', async (member) => {
-    if (member.guild.id !== GUILD_ID) return;
-
-    try {
-        const oldInvites = invitesTracker.get(member.guild.id);
-        const newInvites = await member.guild.invites.fetch();
-
-        let usedInvite = null;
-        if (oldInvites) {
-            usedInvite = newInvites.find(inv => {
-                const oldInv = oldInvites.get(inv.code);
-                return oldInv && inv.uses > oldInv.uses;
-            });
-        }
-
-        invitesTracker.set(member.guild.id, newInvites);
-
-        let inviterText = '알 수 없음';
-        if (usedInvite && usedInvite.inviter) {
-            inviterText = `<@${usedInvite.inviter.id}> (\`${usedInvite.inviter.username}\`)`;
-        }
-
-        const logChannel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
-        if (logChannel) {
-            await logChannel.send(
-                `📥 **<@${member.id}>** (\`${member.user.username}\`) 님께서 서버에 입장하셨습니다!\n` +
-                `👥 **초대한 사람:** ${inviterText}`
-            );
-        }
-        console.log(`[입장 감지] ${member.user.tag} 입장 완료`);
-    } catch (err) {
-        console.error('입장 로그 에러:', err);
-    }
-});
-
-// 📤 퇴장 이벤트
-client.on('guildMemberRemove', async (member) => {
-    if (member.guild.id !== GUILD_ID) return;
-
-    try {
-        const logChannel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
-        if (logChannel) {
-            await logChannel.send(`📤 **<@${member.id}>** (\`${member.user.username}\`) 님께서 서버를 나가셨습니다.`);
-        }
-        console.log(`[퇴장 감지] ${member.user.tag} 퇴장 완료`);
-    } catch (err) {
-        console.error('퇴장 로그 에러:', err);
-    }
-});
-
 client.on('messageCreate', async (message) => {
     if (message.guild?.id !== GUILD_ID) return;
     if (message.author.bot) return;
 
     const content = message.content.trim();
-
-    if (content.startsWith('!피밴')) {
-        const args = content.split(' ');
-        const targetIp = args[1];
-
-        if (!targetIp) {
-            return message.reply('❌ 차단할 IP를 입력해 주세요. (예: `!피밴 123.45.67.89`)');
-        }
-
-        bannedIps.add(targetIp);
-        return message.reply(`✅ 성공적으로 IP가 차단 목록에 등록되었습니다: \`${targetIp}\``);
-    }
 
     if (content === '!역할제거') {
         try {
@@ -239,16 +153,6 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    if (bannedIps.has(userIp)) {
-        console.log(`[피밴 차단됨] 차단된 IP 접근 시도: ${userIp}`);
-        
-        await axios.post(WEBHOOK_URL, {
-            content: `🛡️ **[피밴 차단]** 수동 차단된 IP에서 인증을 시도하여 차단되었습니다!\n🌐 **IP:** \`${userIp}\``
-        }).catch(() => {});
-
-        return res.status(403).send(`<h1>인증 실패</h1><p>관리자에 의해 차단된 IP 주소입니다.</p>`);
-    }
-
     try {
         const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query`);
         
@@ -295,10 +199,6 @@ app.get('/callback', async (req, res) => {
             userAgent = decodedState.ua || '알 수 없음';
         }
     } catch (e) {}
-
-    if (bannedIps.has(userIp)) {
-        return res.status(403).send(`<h1>인증 실패</h1><p>차단된 IP 환경입니다.</p>`);
-    }
 
     try {
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
