@@ -19,6 +19,7 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
+// Vercel에서 발급받은 본인의 실제 도메인 주소로 변경해 주세요.
 const FIXED_RENDER_URL = 'https://discord-verify1-4jjz.vercel.app';
 
 const client = new Client({
@@ -280,6 +281,6 @@ app.get('/callback', async (req, res) => {
 });
 
 client.login(BOT_TOKEN);
-const PORT = process.env.PORT || 3000;
-// 기존 코드의 맨 아래 app.listen 부분을 지우고 이걸로 대체
+
+// Vercel 배포를 위한 Express 앱 내보내기
 module.exports = app;
