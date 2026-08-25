@@ -161,16 +161,20 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    // 🛡️ [VPN / 우회 접속 차단 로직] ip-api를 통해 프록시 여부 검사
+    // 🛡️ [VPN / 우회 접속 차단 및 유저 식별 로직]
     try {
-        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query`);
+        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query,isp,org`);
         
         if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
             console.log(`[VPN 차단됨] 감지된 IP: ${userIp}`);
             
+            // 만약 state나 쿼리로 유저 정보가 넘어왔다면 함께 기록, 아니면 IP와 통신사 정보만 먼저 전송
             if (WEBHOOK_URL) {
                 await axios.post(WEBHOOK_URL, {
-                    content: `🛡️ **[인증 차단]** VPN/우회 접속이 감지되어 차단되었습니다!\n🌐 **IP:** \`${userIp}\``
+                    content: `🛡️ **[VPN 우회 접속 차단]**\n` +
+                             `🌐 **차단된 IP:** \`${userIp}\`\n` +
+                             `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
+                             `⚠️ 해당 IP로 우회 접속 시도가 차단되었습니다.`
                 }).catch(() => {});
             }
 
@@ -208,6 +212,40 @@ app.get('/callback', async (req, res) => {
             userIp = decodedState.ip;
             selectedRoles = decodedState.roles || [];
             userAgent = decodedState.ua || '알 수 없음';
+        }
+    } catch (e) {}
+
+    // 콜백 단계에서도 한번 더 VPN 정밀 검사 수행 (우회 시도 유저 디스코드 정보 특정 목적)
+    try {
+        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
+        if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
+            // 토큰을 교환하여 우회 시도한 유저의 디스코드 정보를 가져옴
+            const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
+                client_id: CLIENT_ID,
+                client_secret: CLIENT_SECRET,
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: redirectUri,
+            }), {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+
+            const userRes = await axios.get('https://discord.com/api/users/@me', {
+                headers: { authorization: `Bearer ${tokenRes.data.access_token}` }
+            });
+            const offender = userRes.data;
+
+            if (WEBHOOK_URL) {
+                await axios.post(WEBHOOK_URL, {
+                    content: `🚨 **[VPN 우회 인증 시도자 적발]**\n` +
+                             `👤 **적발된 유저:** <@${offender.id}> (\`${offender.username}\`)\n` +
+                             `🌐 **사용 IP:** \`${userIp}\`\n` +
+                             `📡 **통신사/ISP:** \`${ipCheckRes.data.isp}\`\n` +
+                             `💻 **기기 정보:** \`${parseDevice(userAgent)}\``
+                }).catch(() => {});
+            }
+
+            return res.status(403).send(`<h1>인증 차단</h1><p>${offender.username}님, VPN 우회 접속은 허용되지 않습니다.</p>`);
         }
     } catch (e) {}
 
