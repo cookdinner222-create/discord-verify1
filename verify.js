@@ -15,7 +15,7 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
-const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID; // 📌 입장과 퇴장 로그가 모두 이 채널로 전송됩니다!
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
@@ -82,7 +82,7 @@ client.on('inviteDelete', async (invite) => {
     } catch (err) {}
 });
 
-// 📥 입장 이벤트 (초대자 추적 및 로그 출력)
+// 📥 입장 이벤트 (초대자 추적 후 LOG_CHANNEL_ID에 전송)
 client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -115,7 +115,7 @@ client.on('guildMemberAdd', async (member) => {
     }
 });
 
-// 📤 퇴장 이벤트 (확실하게 로그 채널에 전송되도록 수정)
+// 📤 퇴장 이벤트 (입장 로그와 동일한 LOG_CHANNEL_ID에 전송)
 client.on('guildMemberRemove', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
