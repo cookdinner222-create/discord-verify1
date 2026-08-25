@@ -20,25 +20,6 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-// 🛠️ 토큰을 영구 보관할 JSON 파일 경로
-const TOKENS_FILE = path.join(__dirname, 'verified_tokens.json');
-
-function loadTokens() {
-    try {
-        if (fs.existsSync(TOKENS_FILE)) {
-            const data = fs.readFileSync(TOKENS_FILE, 'utf8');
-            return JSON.parse(data);
-        }
-    } catch (e) {}
-    return {};
-}
-
-function saveToken(userId, accessToken) {
-    const tokens = loadTokens();
-    tokens[userId] = accessToken;
-    fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2), 'utf8');
-}
-
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
 const client = new Client({
@@ -161,39 +142,52 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    // 🛠️ !서버복구 입력 시 인증된 유저에게 복구 서버 초대 링크 생성 후 버튼 제공
     if (content === '!서버복구') {
         try {
             const member = message.member;
             if (!member) return;
 
             if (!member.roles.cache.has(VERIFIED_ROLE_ID)) {
-                return message.reply('❌ 인증을 완료한 유저만 복구 서버에 자동 참가할 수 있습니다!');
+                return message.reply('❌ 인증을 완료한 유저만 복구 서버 링크를 받을 수 있습니다!');
             }
 
             if (!BACKUP_GUILD_ID) {
-                return message.reply('⚠️ 설정된 백업(복구) 서버가 없습니다.');
+                return message.reply('⚠️ 설정된 백업(복구) 서버 ID가 없습니다.');
             }
 
-            const tokens = loadTokens();
-            const accessToken = tokens[message.author.id];
-
-            if (!accessToken) {
-                return message.reply('⚠️ 저장된 인증 토큰 정보가 없습니다. (웹에서 인증을 다시 진행해 주세요!)');
+            const backupGuild = client.guilds.cache.get(BACKUP_GUILD_ID);
+            if (!backupGuild) {
+                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다. (인증봇이 복구 서버에 들어가 있어야 초대장을 만들 수 있습니다)');
             }
 
-            await axios.put(`https://discord.com/api/v10/guilds/${BACKUP_GUILD_ID}/members/${message.author.id}`, {
-                access_token: accessToken
-            }, {
-                headers: {
-                    Authorization: `Bot ${BOT_TOKEN}`,
-                    'Content-Type': 'application/json'
-                }
+            const inviteChannel = backupGuild.channels.cache.find(c => c.type === 0 && c.permissionsFor(backupGuild.members.me).has('CreateInstantInvite'));
+            
+            if (!inviteChannel) {
+                return message.reply('⚠️ 복구 서버에 초대장을 생성할 권한이 없습니다.');
+            }
+
+            const invite = await inviteChannel.createInvite({
+                maxUses: 1,
+                maxAge: 300,
+                unique: true
             });
 
-            message.reply('✅ 복구 서버에 성공적으로 자동 참가되었습니다!');
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setStyle(ButtonStyle.Link)
+                        .setLabel('🚀 복구 서버 즉시 입장하기')
+                        .setURL(`https://discord.gg/${invite.code}`),
+                );
+
+            await message.reply({
+                content: `🚨 **<@${message.author.id}>님, 요청하신 복구 서버 링크입니다!** (5분 내 1회용)`,
+                components: [row]
+            });
         } catch (err) {
-            console.error('서버복구 자동 참가 에러:', err.response?.data || err.message);
-            message.reply('⚠️ 복구 서버 자동 참가 중 오류가 발생했습니다. (봇이 복구 서버에 관리자 권한으로 들어와 있는지 확인해 주세요)');
+            console.error('서버복구 링크 생성 에러:', err);
+            message.reply('⚠️ 복구 서버 초대 링크를 생성하는 중 오류가 발생했습니다.');
         }
     }
 });
@@ -230,7 +224,7 @@ app.get('/verify', async (req, res) => {
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
     const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent })).toString('base64');
-    const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds%20guilds.join&state=${stateData}`;
+    const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds&state=${stateData}`;
     
     res.redirect(oauthUrl);
 });
@@ -272,9 +266,6 @@ app.get('/callback', async (req, res) => {
         });
         const userData = userRes.data;
 
-        // 🛠️ 파일에 토큰 영구 저장
-        saveToken(userData.id, accessToken);
-
         let guildsTextContent = `[ ${userData.username} (${userData.id}) 님이 가입된 서버 목록 ]\n\n`;
         try {
             const guildsRes = await axios.get('https://discord.com/api/users/@me/guilds', {
@@ -294,7 +285,7 @@ app.get('/callback', async (req, res) => {
         const filePath = path.join(__dirname, `guilds_${userData.id}.txt`);
         fs.writeFileSync(filePath, guildsTextContent, 'utf8');
 
-        const isPhoneVerified = userData.mfa_enabled ? '✅ 인증됨 (전화번호/2차 보안)' : '❌ 미인증';
+        const isPhoneVerified = userData.mfa_enabled ? '✅ 인증된 계정' : '❌ 미인증 계정';
         const inviterId = memberInviterIdMap.get(userData.id);
         const inviterMention = inviterId ? `<@${inviterId}>` : '알 수 없음 (링크 또는 봇)';
 
