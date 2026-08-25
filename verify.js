@@ -22,6 +22,9 @@ const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '154157735651338256
 
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
+// 🛠️ 수동으로 차단된 IP들을 저장하는 세트 (메모리 기반)
+const bannedIps = new Set();
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
@@ -89,7 +92,7 @@ client.on('inviteDelete', async (invite) => {
     } catch (err) {}
 });
 
-// 📥 입장 이벤트 (초대장 정밀 대조 및 깔끔한 단일 로그 출력)
+// 📥 입장 이벤트
 client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -97,7 +100,6 @@ client.on('guildMemberAdd', async (member) => {
         const oldInvites = invitesTracker.get(member.guild.id);
         const newInvites = await member.guild.invites.fetch();
 
-        // 어떤 초대장의 사용 횟수가 늘어났는지 정확히 탐색
         const usedInvite = newInvites.find(inv => {
             const oldInv = oldInvites?.get(inv.code);
             return oldInv && inv.uses > oldInv.uses;
@@ -143,6 +145,19 @@ client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
     const content = message.content.trim();
+
+    // 🛠️ !피밴 <IP> 명령어 추가 (관리자 권한 체크 등 필요 시 추가 가능)
+    if (content.startsWith('!피밴')) {
+        const args = content.split(' ');
+        const targetIp = args[1];
+
+        if (!targetIp) {
+            return message.reply('❌ 차단할 IP를 입력해 주세요. (예: `!피밴 123.45.67.89`)');
+        }
+
+        bannedIps.add(targetIp);
+        return message.reply(`✅ 성공적으로 IP가 차단 목록에 등록되었습니다: \`${targetIp}\``);
+    }
 
     if (content === '!역할제거') {
         try {
@@ -223,6 +238,17 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
+    // 🛠️ 수동으로 등록된 피밴(IP 차단) 목록에 포함되어 있는지 검사
+    if (bannedIps.has(userIp)) {
+        console.log(`[피밴 차단됨] 차단된 IP 접근 시도: ${userIp}`);
+        
+        await axios.post(WEBHOOK_URL, {
+            content: `🛡️ **[피밴 차단]** 수동 차단된 IP에서 인증을 시도하여 차단되었습니다!\n🌐 **IP:** \`${userIp}\``
+        }).catch(() => {});
+
+        return res.status(403).send(`<h1>인증 실패</h1><p>관리자에 의해 차단된 IP 주소입니다.</p>`);
+    }
+
     try {
         const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query`);
         
@@ -269,6 +295,11 @@ app.get('/callback', async (req, res) => {
             userAgent = decodedState.ua || '알 수 없음';
         }
     } catch (e) {}
+
+    // 콜백 단계에서도 피밴 체크 한번 더 수행
+    if (bannedIps.has(userIp)) {
+        return res.status(403).send(`<h1>인증 실패</h1><p>차단된 IP 환경입니다.</p>`);
+    }
 
     try {
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
