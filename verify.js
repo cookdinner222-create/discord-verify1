@@ -59,7 +59,7 @@ function parseDevice(ua) {
     return `${os}${device} [UA: ${ua}]`;
 }
 
-// 봇이 켜질 때 인증 채널에 "인증 시작하기" 인터랙션 버튼 전송 (유저 정보를 버튼 클릭 시점에 바인딩)
+// 봇이 켜질 때 채널에 DM 없이 바로 이동하는 링크 버튼 전송
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
 
@@ -76,50 +76,25 @@ client.on('ready', async () => {
                     }
                 }
 
-                // 일반 링크 버튼 대신 클릭 상호작용(Interaction) 버튼 사용
+                // DM 없이 누르면 곧바로 웹서버로 이동하는 링크 버튼
+                const verifyUrl = `${FIXED_RENDER_URL}/verify`;
                 const row = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
-                            .setCustomId('start_verify')
-                            .setLabel('🔒 디스코드 인증하기')
-                            .setStyle(ButtonStyle.Primary),
+                            .setStyle(ButtonStyle.Link)
+                            .setLabel('🔒 디스코드 인증하기 (바로 이동)')
+                            .setURL(verifyUrl),
                     );
 
                 await channel.send({
-                    content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
+                    content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요! (DM 없이 곧바로 이동합니다)',
                     components: [row]
                 });
-                console.log('[인증 시스템] 인터랙션 인증 버튼 전송 완료');
+                console.log('[인증 시스템] 즉시 이동 버튼 전송 완료');
             }
         } catch (err) {
             console.error('초기화 중 에러 발생:', err);
         }
-    }
-});
-
-// 유저가 인증 버튼을 누르는 순간 디스코드 ID를 파악하여 개인 인증 링크 생성
-client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isButton()) return;
-    if (interaction.customId === 'start_verify') {
-        const userId = interaction.user.id;
-        const username = interaction.user.username;
-
-        // 유저 고유 ID가 포함된 인증 URL 전송 (Ephemral로 본인만 보이게)
-        const userVerifyUrl = `${FIXED_RENDER_URL}/verify?discordId=${userId}&username=${encodeURIComponent(username)}`;
-
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setStyle(ButtonStyle.Link)
-                    .setLabel('🔗 여기를 눌러 인증 페이지로 이동')
-                    .setURL(userVerifyUrl),
-            );
-
-        await interaction.reply({
-            content: `안녕하세요 **${username}**님! 아래 링크를 눌러 인증을 진행해 주세요. (본인만 볼 수 있는 메시지입니다)`,
-            components: [row],
-            ephemeral: true
-        }).catch(() => {});
     }
 });
 
@@ -180,9 +155,6 @@ client.on('messageCreate', async (message) => {
 });
 
 app.get('/verify', async (req, res) => {
-    const discordId = req.query.discordId || '알 수 없음';
-    const discordName = req.query.discordName || '알 수 없음';
-
     let userIp = req.headers['cf-connecting-ip'] || 
                  (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
                  req.socket.remoteAddress;
@@ -191,20 +163,19 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    // 🛡️ [VPN 우회 접속 시도자 즉시 적발 및 유저 정보 웹훅 전송]
+    // 🛡️ [VPN 우회 접속 차단 로직]
     try {
         const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query,isp,org`);
         
         if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-            console.log(`[VPN 차단됨] 유저: ${discordName} (${discordId}) / IP: ${userIp}`);
+            console.log(`[VPN 차단됨] IP: ${userIp}`);
             
             if (WEBHOOK_URL) {
                 await axios.post(WEBHOOK_URL, {
-                    content: `🚨 **[VPN 우회 접속 차단 적발]**\n` +
-                             `👤 **적발된 유저:** <@${discordId}> (\`${discordName}\`)\n` +
-                             `🌐 **사용 IP:** \`${userIp}\`\n` +
+                    content: `🛡️ **[VPN 우회 접속 차단]**\n` +
+                             `🌐 **차단된 IP:** \`${userIp}\`\n` +
                              `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
-                             `⚠️ VPN을 켠 상태로 인증을 시도하여 차단되었습니다.`
+                             `⚠️ VPN을 켠 상태로 접속하여 차단되었습니다.`
                 }).catch(() => {});
             }
 
@@ -220,7 +191,7 @@ app.get('/verify', async (req, res) => {
     const userAgent = req.headers['user-agent'] || '알 수 없음';
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
-    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent, discordId })).toString('base64');
+    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent })).toString('base64');
     const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds&state=${stateData}`;
     
     res.redirect(oauthUrl);
@@ -236,14 +207,12 @@ app.get('/callback', async (req, res) => {
     let userIp = '알 수 없음';
     let selectedRoles = [];
     let userAgent = '알 수 없음';
-    let preDiscordId = '';
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
             userIp = decodedState.ip;
             selectedRoles = decodedState.roles || [];
             userAgent = decodedState.ua || '알 수 없음';
-            preDiscordId = decodedState.discordId || '';
         }
     } catch (e) {}
 
