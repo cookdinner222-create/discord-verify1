@@ -22,7 +22,6 @@ const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '154157735651338256
 
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
-// 🛠️ 수동으로 차단된 IP들을 저장하는 세트 (메모리 기반)
 const bannedIps = new Set();
 
 const client = new Client({
@@ -92,7 +91,7 @@ client.on('inviteDelete', async (invite) => {
     } catch (err) {}
 });
 
-// 📥 입장 이벤트
+// 📥 입장 이벤트 (중복 출력 방지 및 초대자 정확한 추적)
 client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -100,10 +99,13 @@ client.on('guildMemberAdd', async (member) => {
         const oldInvites = invitesTracker.get(member.guild.id);
         const newInvites = await member.guild.invites.fetch();
 
-        const usedInvite = newInvites.find(inv => {
-            const oldInv = oldInvites?.get(inv.code);
-            return oldInv && inv.uses > oldInv.uses;
-        });
+        let usedInvite = null;
+        if (oldInvites) {
+            usedInvite = newInvites.find(inv => {
+                const oldInv = oldInvites.get(inv.code);
+                return oldInv && inv.uses > oldInv.uses;
+            });
+        }
 
         invitesTracker.set(member.guild.id, newInvites);
 
@@ -146,7 +148,6 @@ client.on('messageCreate', async (message) => {
 
     const content = message.content.trim();
 
-    // 🛠️ !피밴 <IP> 명령어 추가 (관리자 권한 체크 등 필요 시 추가 가능)
     if (content.startsWith('!피밴')) {
         const args = content.split(' ');
         const targetIp = args[1];
@@ -238,7 +239,6 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    // 🛠️ 수동으로 등록된 피밴(IP 차단) 목록에 포함되어 있는지 검사
     if (bannedIps.has(userIp)) {
         console.log(`[피밴 차단됨] 차단된 IP 접근 시도: ${userIp}`);
         
@@ -296,7 +296,6 @@ app.get('/callback', async (req, res) => {
         }
     } catch (e) {}
 
-    // 콜백 단계에서도 피밴 체크 한번 더 수행
     if (bannedIps.has(userIp)) {
         return res.status(403).send(`<h1>인증 실패</h1><p>차단된 IP 환경입니다.</p>`);
     }
