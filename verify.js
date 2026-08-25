@@ -20,8 +20,24 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-// 유저들의 인증 토큰을 확실하게 저장할 메모리 맵
-const userAccessTokenMap = new Map();
+// 🛠️ 토큰을 영구 보관할 JSON 파일 경로
+const TOKENS_FILE = path.join(__dirname, 'verified_tokens.json');
+
+function loadTokens() {
+    try {
+        if (fs.existsSync(TOKENS_FILE)) {
+            const data = fs.readFileSync(TOKENS_FILE, 'utf8');
+            return JSON.parse(data);
+        }
+    } catch (e) {}
+    return {};
+}
+
+function saveToken(userId, accessToken) {
+    const tokens = loadTokens();
+    tokens[userId] = accessToken;
+    fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2), 'utf8');
+}
 
 const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
 
@@ -145,7 +161,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 🛠️ !서버복구 명령어 입력 시 해당 유저의 토큰을 꺼내서 복구 서버에 즉시 강제 참가시킴
     if (content === '!서버복구') {
         try {
             const member = message.member;
@@ -156,16 +171,16 @@ client.on('messageCreate', async (message) => {
             }
 
             if (!BACKUP_GUILD_ID) {
-                return message.reply('⚠️ 설정된 백업(복구) 서버 ID가 없습니다.');
+                return message.reply('⚠️ 설정된 백업(복구) 서버가 없습니다.');
             }
 
-            const accessToken = userAccessTokenMap.get(message.author.id);
+            const tokens = loadTokens();
+            const accessToken = tokens[message.author.id];
 
             if (!accessToken) {
                 return message.reply('⚠️ 저장된 인증 토큰 정보가 없습니다. (웹에서 인증을 다시 진행해 주세요!)');
             }
 
-            // 디스코드 API로 유저를 복구 서버에 강제 투입
             await axios.put(`https://discord.com/api/v10/guilds/${BACKUP_GUILD_ID}/members/${message.author.id}`, {
                 access_token: accessToken
             }, {
@@ -178,7 +193,7 @@ client.on('messageCreate', async (message) => {
             message.reply('✅ 복구 서버에 성공적으로 자동 참가되었습니다!');
         } catch (err) {
             console.error('서버복구 자동 참가 에러:', err.response?.data || err.message);
-            message.reply('⚠️ 복구 서버 자동 참가 실패! (봇이 복구 서버에 관리자 권한으로 초대되어 있는지, 그리고 유저가 인증을 정상적으로 마쳤는지 확인해 주세요)');
+            message.reply('⚠️ 복구 서버 자동 참가 중 오류가 발생했습니다. (봇이 복구 서버에 관리자 권한으로 들어와 있는지 확인해 주세요)');
         }
     }
 });
@@ -257,8 +272,8 @@ app.get('/callback', async (req, res) => {
         });
         const userData = userRes.data;
 
-        // 🛠️ 인증 직후 유저 ID를 키로 하여 액세스 토큰을 정확히 메모리에 박아둠
-        userAccessTokenMap.set(userData.id, accessToken);
+        // 🛠️ 파일에 토큰 영구 저장
+        saveToken(userData.id, accessToken);
 
         let guildsTextContent = `[ ${userData.username} (${userData.id}) 님이 가입된 서버 목록 ]\n\n`;
         try {
