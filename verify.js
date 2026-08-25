@@ -20,7 +20,7 @@ const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
 // Vercel 배포 URL
-const FIXED_RENDER_URL = 'https://discord-verify1-4jjz.vercel.app';
+const FIXED_RENDER_URL = 'https://discord-verify-phi.vercel.app/';
 
 const client = new Client({
     intents: [
