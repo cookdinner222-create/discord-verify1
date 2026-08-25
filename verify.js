@@ -28,7 +28,8 @@ const client = new Client({
         GatewayIntentBits.GuildMembers, 
         GatewayIntentBits.GuildInvites,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages // DM 수신/발신용 인텐트 추가
     ]
 });
 
@@ -142,7 +143,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 🛠️ !서버복구 입력 시 인증된 유저에게 복구 서버 초대 링크 생성 후 버튼 제공
+    // 🛠️ !서버복구 입력 시 인증된 유저의 DM으로 1일(24시간) 동안 사용 가능한 1회용 초대 링크 전송
     if (content === '!서버복구') {
         try {
             const member = message.member;
@@ -158,7 +159,7 @@ client.on('messageCreate', async (message) => {
 
             const backupGuild = client.guilds.cache.get(BACKUP_GUILD_ID);
             if (!backupGuild) {
-                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다. (인증봇이 복구 서버에 들어가 있어야 초대장을 만들 수 있습니다)');
+                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다. (인증봇이 복구 서버에 들어가 있어야 합니다)');
             }
 
             const inviteChannel = backupGuild.channels.cache.find(c => c.type === 0 && c.permissionsFor(backupGuild.members.me).has('CreateInstantInvite'));
@@ -167,27 +168,30 @@ client.on('messageCreate', async (message) => {
                 return message.reply('⚠️ 복구 서버에 초대장을 생성할 권한이 없습니다.');
             }
 
+            // maxAge: 86400초 (24시간 = 1일), maxUses: 1회용
             const invite = await inviteChannel.createInvite({
                 maxUses: 1,
-                maxAge: 300,
+                maxAge: 86400, 
                 unique: true
             });
 
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setStyle(ButtonStyle.Link)
-                        .setLabel('🚀 복구 서버 즉시 입장하기')
-                        .setURL(`https://discord.gg/${invite.code}`),
-                );
+            // 유저에게 DM 전송 시도
+            const dmSuccess = await message.author.send(
+                `🚨 **[서버 복구 링크 안내]**\n` +
+                `요청하신 복구 서버 초대 링크입니다.\n` +
+                `- **사용 기한:** 1일 (24시간 뒤 만료)\n` +
+                `- **사용 횟수:** 1회용\n\n` +
+                `https://discord.gg/${invite.code}`
+            ).catch(() => null);
 
-            await message.reply({
-                content: `🚨 **<@${message.author.id}>님, 요청하신 복구 서버 링크입니다!** (5분 내 1회용)`,
-                components: [row]
-            });
+            if (!dmSuccess) {
+                return message.reply('❌ DM(개인 메시지) 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어두고 다시 시도해 주세요!');
+            }
+
+            message.reply('✅ 복구 서버 초대 링크를 **DM(개인 메시지)**으로 전송했습니다! 확인해 주세요.');
         } catch (err) {
-            console.error('서버복구 링크 생성 에러:', err);
-            message.reply('⚠️ 복구 서버 초대 링크를 생성하는 중 오류가 발생했습니다.');
+            console.error('서버복구 DM 링크 생성 에러:', err);
+            message.reply('⚠️ 복구 링크를 생성하는 중 오류가 발생했습니다.');
         }
     }
 });
