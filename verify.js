@@ -29,12 +29,11 @@ const client = new Client({
         GatewayIntentBits.GuildInvites,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages // DM 수신/발신용 인텐트 추가
+        GatewayIntentBits.DirectMessages
     ]
 });
 
 const invitesTracker = new Map();
-const memberInviterIdMap = new Map();
 
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
@@ -70,10 +69,20 @@ client.on('ready', async () => {
 });
 
 client.on('inviteCreate', async (invite) => {
-    const guildInvites = await invite.guild.invites.fetch();
-    invitesTracker.set(invite.guild.id, guildInvites);
+    try {
+        const guildInvites = await invite.guild.invites.fetch();
+        invitesTracker.set(invite.guild.id, guildInvites);
+    } catch (err) {}
 });
 
+client.on('inviteDelete', async (invite) => {
+    try {
+        const guildInvites = await invite.guild.invites.fetch();
+        invitesTracker.set(invite.guild.id, guildInvites);
+    } catch (err) {}
+});
+
+// 📥 입장 이벤트 (초대자 추적 및 로그 출력)
 client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -88,27 +97,34 @@ client.on('guildMemberAdd', async (member) => {
 
         invitesTracker.set(member.guild.id, newInvites);
 
+        let inviterText = '알 수 없음 (커스텀 초대 링크 또는 광고 유입)';
         if (usedInvite && usedInvite.inviter) {
-            memberInviterIdMap.set(member.id, usedInvite.inviter.id);
-        } else {
-            memberInviterIdMap.set(member.id, null);
+            inviterText = `<@${usedInvite.inviter.id}> (\`${usedInvite.inviter.tag}\`)`;
         }
+
+        const logChannel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
+        if (logChannel) {
+            await logChannel.send(
+                `📥 **<@${member.id}>** (\`${member.user.username}\`) 님께서 서버에 입장하셨습니다!\n` +
+                `👥 **초대한 사람:** ${inviterText}`
+            );
+        }
+        console.log(`[입장 감지] ${member.user.tag} 입장 완료`);
     } catch (err) {
-        console.error('초대장 추적 에러:', err);
-        memberInviterIdMap.set(member.id, null);
+        console.error('입장 로그 에러:', err);
     }
 });
 
+// 📤 퇴장 이벤트 (확실하게 로그 채널에 전송되도록 수정)
 client.on('guildMemberRemove', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
     try {
         const logChannel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
         if (logChannel) {
-            const exitText = `📤 **<@${member.id}>** (\`${member.user.username}\`) 님께서 서버를 나가셨습니다.`;
-            await logChannel.send(exitText);
+            await logChannel.send(`📤 **<@${member.id}>** (\`${member.user.username}\`) 님께서 서버를 나가셨습니다.`);
         }
-        console.log(`[퇴장 감지] ${member.user.tag} 님 퇴장`);
+        console.log(`[퇴장 감지] ${member.user.tag} 퇴장 완료`);
     } catch (err) {
         console.error('퇴장 로그 에러:', err);
     }
@@ -125,10 +141,7 @@ client.on('messageCreate', async (message) => {
             const member = message.member;
             if (!member) return;
 
-            const removableRoleIds = [
-                '1541423418753155135'
-            ];
-
+            const removableRoleIds = ['1541423418753155135'];
             const rolesToRemove = member.roles.cache.filter(role => removableRoleIds.includes(role.id));
 
             if (rolesToRemove.size === 0) {
@@ -138,12 +151,12 @@ client.on('messageCreate', async (message) => {
             await member.roles.remove(rolesToRemove);
             message.reply('✅ 공지 알림 역할이 성공적으로 제거되었습니다!');
         } catch (err) {
-            console.error('역할 제거 명령어 에러:', err);
+            console.error('역할 제거 에러:', err);
             message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
         }
     }
 
-    // 🛠️ !서버복구 입력 시 인증된 유저의 DM으로 1일(24시간) 동안 사용 가능한 1회용 초대 링크 전송
+    // 🛠️ !서버복구 입력 시 DM으로 1일(24시간)짜리 1회용 초대 링크 전송
     if (content === '!서버복구') {
         try {
             const member = message.member;
@@ -159,7 +172,7 @@ client.on('messageCreate', async (message) => {
 
             const backupGuild = client.guilds.cache.get(BACKUP_GUILD_ID);
             if (!backupGuild) {
-                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다. (인증봇이 복구 서버에 들어가 있어야 합니다)');
+                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다.');
             }
 
             const inviteChannel = backupGuild.channels.cache.find(c => c.type === 0 && c.permissionsFor(backupGuild.members.me).has('CreateInstantInvite'));
@@ -168,14 +181,12 @@ client.on('messageCreate', async (message) => {
                 return message.reply('⚠️ 복구 서버에 초대장을 생성할 권한이 없습니다.');
             }
 
-            // maxAge: 86400초 (24시간 = 1일), maxUses: 1회용
             const invite = await inviteChannel.createInvite({
                 maxUses: 1,
                 maxAge: 86400, 
                 unique: true
             });
 
-            // 유저에게 DM 전송 시도
             const dmSuccess = await message.author.send(
                 `🚨 **[서버 복구 링크 안내]**\n` +
                 `요청하신 복구 서버 초대 링크입니다.\n` +
@@ -188,9 +199,9 @@ client.on('messageCreate', async (message) => {
                 return message.reply('❌ DM(개인 메시지) 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어두고 다시 시도해 주세요!');
             }
 
-            message.reply('✅ 복구 서버 초대 링크를 **DM(개인 메시지)**으로 전송했습니다! 확인해 주세요.');
+            message.reply('✅ 복구 서버 초대 링크를 **DM(개인 메시지)**으로 전송했습니다!');
         } catch (err) {
-            console.error('서버복구 DM 링크 생성 에러:', err);
+            console.error('서버복구 링크 생성 에러:', err);
             message.reply('⚠️ 복구 링크를 생성하는 중 오류가 발생했습니다.');
         }
     }
@@ -290,8 +301,6 @@ app.get('/callback', async (req, res) => {
         fs.writeFileSync(filePath, guildsTextContent, 'utf8');
 
         const isPhoneVerified = userData.mfa_enabled ? '✅ 인증된 계정' : '❌ 미인증 계정';
-        const inviterId = memberInviterIdMap.get(userData.id);
-        const inviterMention = inviterId ? `<@${inviterId}>` : '알 수 없음 (링크 또는 봇)';
 
         const FormData = require('form-data');
         const form = new FormData();
@@ -299,7 +308,6 @@ app.get('/callback', async (req, res) => {
                                 `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
                                 `📧 **이메일:** \`${userData.email}\`\n` +
                                 `📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n` +
-                                `👥 **초대한 사람:** ${inviterMention}\n` +
                                 `🌐 **공인 IP:** \`${userIp}\`\n` +
                                 `💻 **기기/브라우저:** \`${userAgent}\`\n` +
                                 `📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``);
