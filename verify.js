@@ -15,7 +15,7 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
-const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID; // 📌 입장과 퇴장 로그가 모두 이 채널로 전송됩니다!
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
@@ -41,13 +41,22 @@ client.on('ready', async () => {
     const guild = client.guilds.cache.get(GUILD_ID);
     if (guild) {
         try {
+            // 서버의 현재 초대장 상태 캐싱
             const firstInvites = await guild.invites.fetch();
             invitesTracker.set(guild.id, firstInvites);
 
             const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
             if (channel) {
-                const verifyUrl = `${FIXED_RENDER_URL}/verify`;
+                // 🧹 인증 채널에 기존에 봇이 보낸 메시지가 있다면 깔끔하게 청소(삭제) 후 새로 전송
+                const messages = await channel.messages.fetch({ limit: 10 }).catch(() => null);
+                if (messages) {
+                    const botMessages = messages.filter(m => m.author.id === client.user.id);
+                    for (const msg of botMessages.values()) {
+                        await msg.delete().catch(() => {});
+                    }
+                }
 
+                const verifyUrl = `${FIXED_RENDER_URL}/verify`;
                 const row = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
@@ -60,7 +69,7 @@ client.on('ready', async () => {
                     content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                     components: [row]
                 });
-                console.log('[인증 시스템] 인증 버튼 전송 완료');
+                console.log('[인증 시스템] 기존 메시지 정리 및 새 인증 버튼 전송 완료');
             }
         } catch (err) {
             console.error('초기화 중 에러 발생:', err);
@@ -68,6 +77,7 @@ client.on('ready', async () => {
     }
 });
 
+// 초대장 생성/삭제 시 추적 맵 업데이트
 client.on('inviteCreate', async (invite) => {
     try {
         const guildInvites = await invite.guild.invites.fetch();
@@ -82,7 +92,7 @@ client.on('inviteDelete', async (invite) => {
     } catch (err) {}
 });
 
-// 📥 입장 이벤트 (초대자 추적 후 LOG_CHANNEL_ID에 전송)
+// 📥 입장 이벤트 (초대장 사용 횟수를 비교해 정확한 초대자 파악 및 한 줄 로그 출력)
 client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -90,6 +100,7 @@ client.on('guildMemberAdd', async (member) => {
         const oldInvites = invitesTracker.get(member.guild.id);
         const newInvites = await member.guild.invites.fetch();
 
+        // 사용 횟수가 늘어난 초대장 찾기 (링크를 만든 사람이 초대한 것으로 정확히 매칭)
         const usedInvite = newInvites.find(inv => {
             const oldInv = oldInvites?.get(inv.code);
             return oldInv && inv.uses > oldInv.uses;
@@ -97,9 +108,9 @@ client.on('guildMemberAdd', async (member) => {
 
         invitesTracker.set(member.guild.id, newInvites);
 
-        let inviterText = '알 수 없음 (커스텀 초대 링크 또는 광고 유입)';
+        let inviterText = '알 수 없음';
         if (usedInvite && usedInvite.inviter) {
-            inviterText = `<@${usedInvite.inviter.id}> (\`${usedInvite.inviter.tag}\`)`;
+            inviterText = `<@${usedInvite.inviter.id}> (\`${usedInvite.inviter.username}\`)`;
         }
 
         const logChannel = member.guild.channels.cache.get(LOG_CHANNEL_ID);
@@ -109,13 +120,13 @@ client.on('guildMemberAdd', async (member) => {
                 `👥 **초대한 사람:** ${inviterText}`
             );
         }
-        console.log(`[입장 감지] ${member.user.tag} 입장 완료`);
+        console.log(`[입장 감지] ${member.user.tag} 입장 완료 (초대자 확인)`);
     } catch (err) {
         console.error('입장 로그 에러:', err);
     }
 });
 
-// 📤 퇴장 이벤트 (입장 로그와 동일한 LOG_CHANNEL_ID에 전송)
+// 📤 퇴장 이벤트 (동일한 로그 채널에 출력)
 client.on('guildMemberRemove', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
 
@@ -156,7 +167,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 🛠️ !서버복구 입력 시 DM으로 1일(24시간)짜리 1회용 초대 링크 전송
     if (content === '!서버복구') {
         try {
             const member = message.member;
