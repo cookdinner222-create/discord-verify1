@@ -111,6 +111,26 @@ client.on('messageCreate', async (message) => {
 
     const content = message.content.trim();
 
+    // !역할제거 명령어 처리 (1400805500374745122 역할 제거)
+    if (content === '!역할제거') {
+        try {
+            const member = message.member;
+            if (!member) return;
+
+            const targetRoleId = '1400805500374745122';
+
+            if (!member.roles.cache.has(targetRoleId)) {
+                return message.reply('❌ 제거할 해당 역할이 없습니다.');
+            }
+
+            await member.roles.remove(targetRoleId);
+            message.reply('✅ 지정된 역할이 성공적으로 제거되었습니다!');
+        } catch (err) {
+            console.error('역할 제거 에러:', err);
+            message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
+        }
+    }
+
     if (content === '!서버복구') {
         try {
             const member = message.member;
