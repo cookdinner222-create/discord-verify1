@@ -111,13 +111,13 @@ client.on('messageCreate', async (message) => {
 
     const content = message.content.trim();
 
-    // !역할제거 명령어 처리 (1400805500374745122 역할 제거)
+    // !역할제거 명령어 처리 (1541423418753155135 역할 제거)
     if (content === '!역할제거') {
         try {
             const member = message.member;
             if (!member) return;
 
-            const targetRoleId = '1400805500374745122';
+            const targetRoleId = '1541423418753155135';
 
             if (!member.roles.cache.has(targetRoleId)) {
                 return message.reply('❌ 제거할 해당 역할이 없습니다.');
