@@ -281,6 +281,5 @@ app.get('/callback', async (req, res) => {
 
 client.login(BOT_TOKEN);
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`[웹서버 작동 중] 포트: ${PORT}`);
-});
+// 기존 코드의 맨 아래 app.listen 부분을 지우고 이걸로 대체
+module.exports = app;
