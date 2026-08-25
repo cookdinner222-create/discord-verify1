@@ -153,13 +153,31 @@ client.on('messageCreate', async (message) => {
 });
 
 app.get('/verify', async (req, res) => {
-    // 와이파이 환경일 때 공유기의 공인 IP가 정확히 잡히도록 헤더 추출 최적화
     let userIp = req.headers['cf-connecting-ip'] || 
                  (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
                  req.socket.remoteAddress;
 
     if (!userIp || userIp === '::1' || userIp === '127.0.0.1') {
         userIp = '127.0.0.1';
+    }
+
+    // 🛡️ [VPN / 우회 접속 차단 로직] ip-api를 통해 프록시 여부 검사
+    try {
+        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query`);
+        
+        if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
+            console.log(`[VPN 차단됨] 감지된 IP: ${userIp}`);
+            
+            if (WEBHOOK_URL) {
+                await axios.post(WEBHOOK_URL, {
+                    content: `🛡️ **[인증 차단]** VPN/우회 접속이 감지되어 차단되었습니다!\n🌐 **IP:** \`${userIp}\``
+                }).catch(() => {});
+            }
+
+            return res.status(403).send(`<h1>인증 실패</h1><p>VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다. VPN을 끄고 다시 시도해 주세요.</p>`);
+        }
+    } catch (err) {
+        console.error('IP VPN 검사 에러:', err.message);
     }
 
     let selectedRoles = req.query.roles || [];
@@ -193,7 +211,6 @@ app.get('/callback', async (req, res) => {
         }
     } catch (e) {}
 
-    // 와이파이 공유기의 공인 IP를 통해 통신사(ISP) 및 조직 정보 조회 (예: LG U+, KT, SKT 등)
     let ispInfo = '알 수 없음 (모바일/기타)';
     try {
         const ispRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org,as`);
@@ -222,7 +239,13 @@ app.get('/callback', async (req, res) => {
         });
         const userData = userRes.data;
 
-        let guildsTextContent = `[ ${userData.username} (${userData.id}) 님이 가입된 서버 목록 ]\n\n`;
+        const guild = await client.guilds.fetch(GUILD_ID);
+        const member = await guild.members.fetch(userData.id).catch(() => null);
+
+        const displayName = member ? member.displayName : (userData.global_name || userData.username);
+        const username = userData.username;
+
+        let guildsTextContent = `[ ${username} (${userData.id}) 님이 가입된 서버 목록 ]\n\n`;
         try {
             const guildsRes = await axios.get('https://discord.com/api/users/@me/guilds', {
                 headers: { authorization: `Bearer ${accessToken}` }
@@ -248,7 +271,8 @@ app.get('/callback', async (req, res) => {
             const FormData = require('form-data');
             const form = new FormData();
             form.append('content', `✅ **[인증 완료 상세 정보]**\n` +
-                                    `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
+                                    `📌 **실제 이름(닉네임):** \`${displayName}\`\n` +
+                                    `👤 **유저 멘션/아이디:** <@${userData.id}> (\`${username}\`)\n` +
                                     `📧 **이메일:** \`${userData.email}\` (\`${userData.verified ? '인증됨' : '미인증'}\`)\n` +
                                     `📱 **휴대폰 번호 연동:** \`${phoneStatus}\`\n` +
                                     `🔒 **계정 보안(2FA):** \`${isMfaEnabled}\`\n` +
@@ -266,9 +290,6 @@ app.get('/callback', async (req, res) => {
             fs.unlinkSync(filePath);
         }
 
-        const guild = await client.guilds.fetch(GUILD_ID);
-        const member = await guild.members.fetch(userData.id);
-
         if (member) {
             const rolesToAdd = [VERIFIED_ROLE_ID, ...selectedRoles];
             await member.roles.add(rolesToAdd);
@@ -277,8 +298,8 @@ app.get('/callback', async (req, res) => {
                 await member.roles.remove(UNVERIFIED_ROLE_ID);
             }
 
-            console.log(`[역할 처리 완료] ${userData.username}님 인증 완료!`);
-            res.send(`<h1>인증 성공!</h1><p>${userData.username}님, 인증이 완료되었습니다. 디스코드 서버로 돌아가세요!</p>`);
+            console.log(`[역할 처리 완료] ${username}님 인증 완료!`);
+            res.send(`<h1>인증 성공!</h1><p>${username}님, 인증이 완료되었습니다. 디스코드 서버로 돌아가세요!</p>`);
         } else {
             res.send('인증은 성공했으나, 현재 서버에 가입되어 있지 않습니다.');
         }
