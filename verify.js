@@ -19,7 +19,7 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-const FIXED_RENDER_URL = 'https://discord-verify1-524a.onrender.com';
+const FIXED_RENDER_URL = 'https://discord-verify1-4jjz.vercel.app';
 
 const client = new Client({
     intents: [
