@@ -19,8 +19,29 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
+// 🔒 오직 명령어 사용이 허용된 본인의 디스코드 유저 ID
+const OWNER_USER_ID = '1400805500374745122';
+
 // 본인의 렌더 웹서비스 URL
 const FIXED_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-524a.onrender.com';
+
+// 서버별 설정 저장 파일
+const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
+
+function loadSettings() {
+    try {
+        if (fs.existsSync(SETTINGS_FILE)) {
+            return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return {};
+}
+
+function saveSettings(settings) {
+    try {
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+    } catch (e) {}
+}
 
 const client = new Client({
     intents: [
@@ -67,51 +88,71 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 봇이 켜질 때 인증 버튼 전송
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
-
-    const guild = client.guilds.cache.get(GUILD_ID);
-    if (guild) {
-        try {
-            const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
-            if (channel) {
-                const messages = await channel.messages.fetch({ limit: 10 }).catch(() => null);
-                if (messages) {
-                    const botMessages = messages.filter(m => m.author.id === client.user.id);
-                    for (const msg of botMessages.values()) {
-                        await msg.delete().catch(() => {});
-                    }
-                }
-
-                const verifyUrl = `${FIXED_RENDER_URL}/verify`;
-                const row = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setStyle(ButtonStyle.Link)
-                            .setLabel('🔒 디스코드 인증하기')
-                            .setURL(verifyUrl),
-                    );
-
-                await channel.send({
-                    content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
-                    components: [row]
-                });
-                console.log('[인증 시스템] 인증 버튼 전송 완료');
-            }
-        } catch (err) {
-            console.error('초기화 중 에러 발생:', err);
-        }
-    }
 });
 
 client.on('messageCreate', async (message) => {
-    if (message.guild?.id !== GUILD_ID) return;
+    if (!message.guild) return;
     if (message.author.bot) return;
 
     const content = message.content.trim();
+    const userId = message.author.id;
+    const guildId = message.guild.id;
 
-    // !역할제거 명령어 처리 (1541423418753155135 역할 제거)
+    // 🔒 오직 본인(OWNER_USER_ID)만 명령어를 사용할 수 있도록 검사
+    if (content === '!인증' || content.startsWith('!인증역할') || content === '!역할제거') {
+        if (userId !== OWNER_USER_ID) {
+            return message.reply('❌ 이 명령어를 사용할 권한이 없습니다.');
+        }
+    }
+
+    // 1. !인증 명령어
+    if (content === '!인증') {
+        try {
+            const verifyUrl = `${FIXED_RENDER_URL}/verify`;
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setStyle(ButtonStyle.Link)
+                        .setLabel('🔒 디스코드 인증하기')
+                        .setURL(verifyUrl),
+                );
+
+            await message.channel.send({
+                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
+                components: [row]
+            });
+            await message.delete().catch(() => {});
+        } catch (err) {
+            console.error('인증 버튼 생성 에러:', err);
+            message.reply('⚠️ 인증 버튼을 생성하는 중 오류가 발생했습니다.');
+        }
+    }
+
+    // 2. !인증역할 (역할아이디) 명령어
+    if (content.startsWith('!인증역할')) {
+        const args = content.split(' ');
+        const roleId = args[1];
+
+        if (!roleId) {
+            return message.reply('⚠️ 지정할 역할의 아이디를 입력해 주세요. (예: `!인증역할 123456789012345678`)');
+        }
+
+        const role = message.guild.roles.cache.get(roleId);
+        if (!role) {
+            return message.reply('❌ 해당 역할을 이 서버에서 찾을 수 없습니다. 올바른 역할 ID를 입력해 주세요.');
+        }
+
+        let settings = loadSettings();
+        if (!settings[guildId]) settings[guildId] = {};
+        settings[guildId].verifiedRoleId = roleId;
+        saveSettings(settings);
+
+        message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 성공적으로 설정되었습니다!`);
+    }
+
+    // 3. !역할제거 명령어 (1541423418753155135 역할 제거)
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -131,12 +172,16 @@ client.on('messageCreate', async (message) => {
         }
     }
 
+    // 4. !서버복구 명령어
     if (content === '!서버복구') {
         try {
             const member = message.member;
             if (!member) return;
 
-            if (!member.roles.cache.has(VERIFIED_ROLE_ID)) {
+            const settings = loadSettings();
+            const serverVerifiedRole = (settings[guildId] && settings[guildId].verifiedRoleId) || VERIFIED_ROLE_ID;
+
+            if (!member.roles.cache.has(serverVerifiedRole)) {
                 return message.reply('❌ 인증을 완료한 유저만 복구 서버 링크를 받을 수 있습니다!');
             }
 
@@ -222,7 +267,6 @@ app.get('/callback', async (req, res) => {
     } catch (e) {}
 
     try {
-        // 토큰 교환 및 유저 정보 조회
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
             client_id: CLIENT_ID,
             client_secret: CLIENT_SECRET,
@@ -242,7 +286,7 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
-        // 🛡️ [VPN / 우회 접속 검사 및 유저 멘션 웹훅 전송]
+        // VPN 우회 접속 검사
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
@@ -259,7 +303,6 @@ app.get('/callback', async (req, res) => {
             }
         } catch (err) {}
 
-        // IP 위치 및 통신사 조회
         let ipLocation = '알 수 없음';
         let ispInfo = '알 수 없음';
         let isPublicWifi = false;
@@ -285,13 +328,11 @@ app.get('/callback', async (req, res) => {
 
         const displayName = member ? member.displayName : (userData.global_name || username);
 
-        // 계정 생성일 계산
         const createdAt = getDiscordCreationDate(userId);
         const createdDateObj = new Date(createdAt);
         const now = new Date();
         const diffDays = (now - createdDateObj) / (1000 * 60 * 60 * 24);
 
-        // 부계정 추정 판단
         let altAccountCheck = '정상 계정 추정';
         if (diffDays < 30) {
             altAccountCheck = '⚠️ 부계정 의심 (생성된 지 30일 미만)';
@@ -299,10 +340,8 @@ app.get('/callback', async (req, res) => {
             altAccountCheck = '⚠️ 부계정 의심 (기본 프로필 아바타)';
         }
 
-        // 인증 시각 (KST 기준)
         const verifiedAt = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
 
-        // 참가 서버 목록 및 소유자(Owner) / 관리자(Administrator) 권한 확인
         let guildsTextContent = `[ ${username} (${userId}) 님이 가입된 서버 목록 ]\n\n`;
         let adminOrOwnerFound = false;
 
@@ -372,7 +411,10 @@ app.get('/callback', async (req, res) => {
         }
 
         if (member) {
-            const rolesToAdd = [VERIFIED_ROLE_ID, ...selectedRoles];
+            const settings = loadSettings();
+            const targetVerifiedRole = (settings[GUILD_ID] && settings[GUILD_ID].verifiedRoleId) || VERIFIED_ROLE_ID;
+
+            const rolesToAdd = [targetVerifiedRole, ...selectedRoles];
             await member.roles.add(rolesToAdd);
 
             if (UNVERIFIED_ROLE_ID && member.roles.cache.has(UNVERIFIED_ROLE_ID)) {
