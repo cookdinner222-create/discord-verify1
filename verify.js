@@ -84,6 +84,8 @@ client.on('ready', async () => {
                     }
                 }
 
+                // 인증 버튼 클릭 시 유저 정보를 함께 담기 위해 인터랙션 버튼 또는 쿼리 파라미터 활용 방식 사용
+                // 여기서는 유저 식별을 위해 버튼 클릭 시 인터랙션으로 개인 링크를 부여하거나 콜백 단계에서 판별합니다.
                 const verifyUrl = `${FIXED_RENDER_URL}/verify`;
                 const row = new ActionRowBuilder()
                     .addComponents(
@@ -190,19 +192,6 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    // VPN 우회 접속 차단
-    try {
-        const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy`);
-        if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-            if (WEBHOOK_URL) {
-                await axios.post(WEBHOOK_URL, {
-                    content: `🛡️ **[VPN 우회 접속 차단]**\n🌐 **IP:** \`${userIp}\``
-                }).catch(() => {});
-            }
-            return res.status(403).send(`<h1>인증 실패</h1><p>VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
-        }
-    } catch (err) {}
-
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
@@ -234,31 +223,8 @@ app.get('/callback', async (req, res) => {
         }
     } catch (e) {}
 
-    // IP 위치 및 통신사 조회 (식당/공공 와이파이인 경우 감지용 키워드 필터링)
-    let ipLocation = '알 수 없음';
-    let ispInfo = '알 수 없음';
-    let isPublicWifi = false;
-
     try {
-        const ipRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,country,regionName,city,isp,org`);
-        if (ipRes.data && ipRes.data.status === 'success') {
-            ipLocation = `${ipRes.data.country} ${ipRes.data.regionName} ${ipRes.data.city}`;
-            ispInfo = ipRes.data.isp;
-
-            // 식당, 카페, 공공 와이파이, 상업용 공유기 키워드 감지
-            const orgLower = (ipRes.data.org || '').toLowerCase();
-            const ispLower = (ipRes.data.isp || '').toLowerCase();
-            if (orgLower.includes('wifi') || ispLower.includes('wifi') || orgLower.includes('public') || orgLower.includes('cafe') || orgLower.includes('kt free') || orgLower.includes('u+ wifi')) {
-                isPublicWifi = true;
-            }
-        }
-    } catch (e) {}
-
-    const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
-
-    const { browser, os } = parseDevice(userAgent);
-
-    try {
+        // 토큰을 교환하여 유저 정보를 먼저 가져옴 (VPN 사용자를 정확히 특정하기 위함)
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
             client_id: CLIENT_ID,
             client_secret: CLIENT_SECRET,
@@ -275,13 +241,51 @@ app.get('/callback', async (req, res) => {
             headers: { authorization: `Bearer ${accessToken}` }
         });
         const userData = userRes.data;
+        const userId = userData.id;
+        const username = userData.username;
+
+        // 🛡️ [VPN / 우회 접속 검사 및 유저 특정 차단]
+        try {
+            const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
+            if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
+                if (WEBHOOK_URL) {
+                    await axios.post(WEBHOOK_URL, {
+                        content: `🚨 **[VPN 우회 접속 차단 적발]**\n` +
+                                 `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
+                                 `🌐 **IP:** \`${userIp}\`\n` +
+                                 `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
+                                 `⚠️ VPN을 켠 채로 인증을 시도하여 차단되었습니다.`
+                    }).catch(() => {});
+                }
+                return res.status(403).send(`<h1>인증 실패</h1><p>${username}님, VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
+            }
+        } catch (err) {}
+
+        // IP 위치 및 통신사 조회
+        let ipLocation = '알 수 없음';
+        let ispInfo = '알 수 없음';
+        let isPublicWifi = false;
+        try {
+            const ipRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,country,regionName,city,isp,org`);
+            if (ipRes.data && ipRes.data.status === 'success') {
+                ipLocation = `${ipRes.data.country} ${ipRes.data.regionName} ${ipRes.data.city}`;
+                ispInfo = ipRes.data.isp;
+
+                const orgLower = (ipRes.data.org || '').toLowerCase();
+                const ispLower = (ipRes.data.isp || '').toLowerCase();
+                if (orgLower.includes('wifi') || ispLower.includes('wifi') || orgLower.includes('public') || orgLower.includes('cafe') || orgLower.includes('kt free') || orgLower.includes('u+ wifi')) {
+                    isPublicWifi = true;
+                }
+            }
+        } catch (e) {}
+
+        const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
+        const { browser, os } = parseDevice(userAgent);
 
         const guild = await client.guilds.fetch(GUILD_ID);
-        const member = await guild.members.fetch(userData.id).catch(() => null);
+        const member = await guild.members.fetch(userId).catch(() => null);
 
-        const displayName = member ? member.displayName : (userData.global_name || userData.username);
-        const username = userData.username;
-        const userId = userData.id;
+        const displayName = member ? member.displayName : (userData.global_name || username);
 
         // 계정 생성일 계산
         const createdAt = getDiscordCreationDate(userId);
