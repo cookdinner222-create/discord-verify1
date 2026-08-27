@@ -84,8 +84,6 @@ client.on('ready', async () => {
                     }
                 }
 
-                // 인증 버튼 클릭 시 유저 정보를 함께 담기 위해 인터랙션 버튼 또는 쿼리 파라미터 활용 방식 사용
-                // 여기서는 유저 식별을 위해 버튼 클릭 시 인터랙션으로 개인 링크를 부여하거나 콜백 단계에서 판별합니다.
                 const verifyUrl = `${FIXED_RENDER_URL}/verify`;
                 const row = new ActionRowBuilder()
                     .addComponents(
@@ -224,7 +222,7 @@ app.get('/callback', async (req, res) => {
     } catch (e) {}
 
     try {
-        // 토큰을 교환하여 유저 정보를 먼저 가져옴 (VPN 사용자를 정확히 특정하기 위함)
+        // 토큰 교환 및 유저 정보 조회
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
             client_id: CLIENT_ID,
             client_secret: CLIENT_SECRET,
@@ -244,7 +242,7 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
-        // 🛡️ [VPN / 우회 접속 검사 및 유저 특정 차단]
+        // 🛡️ [VPN / 우회 접속 검사 및 유저 멘션 웹훅 전송]
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
