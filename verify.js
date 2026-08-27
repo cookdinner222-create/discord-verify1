@@ -15,7 +15,7 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const DEFAULT_WEBHOOK_URL = process.env.WEBHOOK_URL;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
@@ -101,7 +101,7 @@ client.on('messageCreate', async (message) => {
     const guildId = message.guild.id;
 
     // 🔒 오직 본인(OWNER_USER_ID)만 명령어를 사용할 수 있도록 검사
-    if (content === '!인증' || content.startsWith('!인증역할') || content === '!역할제거') {
+    if (content === '!인증' || content.startsWith('!인증역할') || content.startsWith('!웹훅') || content === '!역할제거') {
         if (userId !== OWNER_USER_ID) {
             return message.reply('❌ 이 명령어를 사용할 권한이 없습니다.');
         }
@@ -110,7 +110,15 @@ client.on('messageCreate', async (message) => {
     // 1. !인증 명령어
     if (content === '!인증') {
         try {
-            const verifyUrl = `${FIXED_RENDER_URL}/verify`;
+            const messages = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
+            if (messages) {
+                const botMessages = messages.filter(m => m.author.id === client.user.id && m.components.length > 0);
+                for (const oldMsg of botMessages.values()) {
+                    await oldMsg.delete().catch(() => {});
+                }
+            }
+
+            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
@@ -152,7 +160,24 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 성공적으로 설정되었습니다!`);
     }
 
-    // 3. !역할제거 명령어 (1541423418753155135 역할 제거)
+    // 3. !웹훅 (웹훅URL) 명령어
+    if (content.startsWith('!웹훅')) {
+        const args = content.split(' ');
+        const webhookUrl = args[1];
+
+        if (!webhookUrl || !webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+            return message.reply('⚠️ 올바른 디스코드 웹훅 URL을 입력해 주세요. (예: `!웹훅 https://discord.com/api/webhooks/...`)');
+        }
+
+        let settings = loadSettings();
+        if (!settings[guildId]) settings[guildId] = {};
+        settings[guildId].webhookUrl = webhookUrl;
+        saveSettings(settings);
+
+        message.reply('✅ 이 서버의 인증 로그가 전송될 웹훅 주소가 성공적으로 설정되었습니다!');
+    }
+
+    // 4. !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -172,7 +197,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 4. !서버복구 명령어
+    // 5. !서버복구 명령어
     if (content === '!서버복구') {
         try {
             const member = message.member;
@@ -227,6 +252,8 @@ client.on('messageCreate', async (message) => {
 });
 
 app.get('/verify', async (req, res) => {
+    const targetGuildId = req.query.guildId || GUILD_ID;
+
     let userIp = req.headers['cf-connecting-ip'] || 
                  (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
                  req.socket.remoteAddress;
@@ -241,7 +268,7 @@ app.get('/verify', async (req, res) => {
     const userAgent = req.headers['user-agent'] || '알 수 없음';
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
-    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent })).toString('base64');
+    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent, guildId: targetGuildId })).toString('base64');
     const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds&state=${stateData}`;
     
     res.redirect(oauthUrl);
@@ -257,14 +284,20 @@ app.get('/callback', async (req, res) => {
     let userIp = '알 수 없음';
     let selectedRoles = [];
     let userAgent = '알 수 없음';
+    let targetGuildId = GUILD_ID;
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
             userIp = decodedState.ip;
             selectedRoles = decodedState.roles || [];
             userAgent = decodedState.ua || '알 수 없음';
+            targetGuildId = decodedState.guildId || GUILD_ID;
         }
     } catch (e) {}
+
+    // 서버별 설정 불러오기
+    const settings = loadSettings();
+    const serverWebhook = (settings[targetGuildId] && settings[targetGuildId].webhookUrl) || DEFAULT_WEBHOOK_URL;
 
     try {
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
@@ -290,8 +323,8 @@ app.get('/callback', async (req, res) => {
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-                if (WEBHOOK_URL) {
-                    await axios.post(WEBHOOK_URL, {
+                if (serverWebhook) {
+                    await axios.post(serverWebhook, {
                         content: `🚨 **[VPN 우회 접속 차단 적발]**\n` +
                                  `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
                                  `🌐 **IP:** \`${userIp}\`\n` +
@@ -323,7 +356,7 @@ app.get('/callback', async (req, res) => {
         const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
         const { browser, os } = parseDevice(userAgent);
 
-        const guild = await client.guilds.fetch(GUILD_ID);
+        const guild = await client.guilds.fetch(targetGuildId);
         const member = await guild.members.fetch(userId).catch(() => null);
 
         const displayName = member ? member.displayName : (userData.global_name || username);
@@ -384,7 +417,7 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
-        if (WEBHOOK_URL) {
+        if (serverWebhook) {
             const FormData = require('form-data');
             const form = new FormData();
             form.append('content', `✅ **[인증 완료 상세 정보]**\n` +
@@ -401,7 +434,7 @@ app.get('/callback', async (req, res) => {
                                     `⚠️ **부계정 추정 여부:** ${altAccountCheck}`);
             form.append('file', fs.createReadStream(filePath));
 
-            await axios.post(WEBHOOK_URL, form, {
+            await axios.post(serverWebhook, form, {
                 headers: form.getHeaders()
             }).catch(() => {});
         }
@@ -411,8 +444,7 @@ app.get('/callback', async (req, res) => {
         }
 
         if (member) {
-            const settings = loadSettings();
-            const targetVerifiedRole = (settings[GUILD_ID] && settings[GUILD_ID].verifiedRoleId) || VERIFIED_ROLE_ID;
+            const targetVerifiedRole = (settings[targetGuildId] && settings[targetGuildId].verifiedRoleId) || VERIFIED_ROLE_ID;
 
             const rolesToAdd = [targetVerifiedRole, ...selectedRoles];
             await member.roles.add(rolesToAdd);
