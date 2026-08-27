@@ -25,9 +25,8 @@ const OWNER_USER_ID = '1400805500374745122';
 // 본인의 렌더 웹서비스 URL
 const FIXED_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-524a.onrender.com';
 
-// 서버별 설정 및 유저 인증 로그 저장 파일
+// 서버별 설정 저장 파일 (인증 역할 및 서버별 웹훅 저장용)
 const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
-const USER_LOGS_FILE = path.join(__dirname, 'user_verify_logs.json');
 
 function loadSettings() {
     try {
@@ -41,23 +40,6 @@ function loadSettings() {
 function saveSettings(settings) {
     try {
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
-    } catch (e) {}
-}
-
-function loadUserLogs() {
-    try {
-        if (fs.existsSync(USER_LOGS_FILE)) {
-            return JSON.parse(fs.readFileSync(USER_LOGS_FILE, 'utf8'));
-        }
-    } catch (e) {}
-    return {};
-}
-
-function saveUserLog(userId, logData) {
-    try {
-        const logs = loadUserLogs();
-        logs[userId] = logData;
-        fs.writeFileSync(USER_LOGS_FILE, JSON.stringify(logs, null, 2), 'utf8');
     } catch (e) {}
 }
 
@@ -195,9 +177,8 @@ client.on('messageCreate', async (message) => {
         message.reply('✅ 이 서버 전용 웹훅 주소가 성공적으로 설정되었습니다!');
     }
 
-    // 4. !인증정보 (멘션 또는 유저ID) 명령어
+    // 4. !인증정보 (멘션 또는 유저ID) 명령어 -> 웹훅 로그 채널을 뒤져서 가져오기
     if (content.startsWith('!인증정보')) {
-        // 멘션된 유저 ID 추출 또는 입력된 ID 추출
         let targetUserId = '';
         const mentionedUser = message.mentions.users.first();
         if (mentionedUser) {
@@ -211,25 +192,39 @@ client.on('messageCreate', async (message) => {
             return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요. (예: `!인증정보 @유저` 또는 `!인증정보 123456789`)');
         }
 
-        const logs = loadUserLogs();
-        const userLog = logs[targetUserId];
+        // 명령어 입력된 채널(또는 서버 내 봇이 접근 가능한 채널들)에서 최근 웹훅 로그 탐색
+        // 편의상 명령어를 친 현재 채널을 포함해 최근 메시지 100개를 스캔합니다.
+        const processingMsg = await message.reply('🔍 웹훅 로그 기록을 검색하는 중입니다...');
 
-        if (!userLog) {
-            return message.reply(`❌ 해당 유저(<@${targetUserId}>)의 저장된 인증 기록이 없습니다.`);
+        try {
+            const fetchedMessages = await message.channel.messages.fetch({ limit: 100 }).catch(() => null);
+            let foundContent = null;
+
+            if (fetchedMessages) {
+                // 웹훅이 보낸 메시지들 중 해당 유저 ID나 멘션이 포함된 메시지 탐색
+                for (const msg of fetchedMessages.values()) {
+                    if (msg.content && (msg.content.includes(targetUserId))) {
+                        // 인증 완료 또는 차단 로그 형태인 경우
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('VPN 우회 접속 차단')) {
+                            foundContent = msg.content;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            await processingMsg.delete().catch(() => {});
+
+            if (!foundContent) {
+                return message.reply(`❌ 이 채널의 최근 웹훅 로그 기록에서 해당 유저(<@${targetUserId}>)의 인증 기록을 찾지 못했습니다.`);
+            }
+
+            message.reply(`📋 **[웹훅 로그 검색 결과]**\n\n${foundContent}`);
+
+        } catch (err) {
+            await processingMsg.delete().catch(() => {});
+            message.reply('⚠️ 로그를 검색하는 중 오류가 발생했습니다.');
         }
-
-        message.reply(`🔍 **[유저 인증 기록 조회 결과]**\n` +
-                      `📌 **닉네임:** \`${userLog.displayName}\`\n` +
-                      `👤 **유저:** <@${userLog.userId}> (\`${userLog.username}\`)\n` +
-                      `🏫 **최근 인증 서버:** \`${userLog.serverName}\`\n` +
-                      `📅 **계정 생성일:** \`${userLog.createdAt}\`\n` +
-                      `🔒 **2차 인증(OTP):** \`${userLog.isMfaEnabled}\`\n` +
-                      `⏰ **인증 시각:** \`${userLog.verifiedAt}\`\n` +
-                      `🌐 **아이피:** \`${userLog.ipDisplay}\`\n` +
-                      `📍 **위치:** \`${userLog.ipLocation}\`\n` +
-                      `📡 **통신사:** \`${userLog.ispInfo}\`\n` +
-                      `💻 **기기:** \`${userLog.browser} / ${userLog.os}\`\n` +
-                      `⚠️ **부계정 여부:** ${userLog.altAccountCheck}`);
     }
 
     // 5. !역할제거 명령어
@@ -470,23 +465,6 @@ app.get('/callback', async (req, res) => {
         if (adminOrOwnerFound) {
             altAccountCheck += ' / ⚠️ 주요 서버 소유 또는 관리자 권한 보유 계정';
         }
-
-        // 유저별 로그 저장 파일에 데이터 백업 (명령어 조회용)
-        saveUserLog(userId, {
-            userId,
-            username,
-            displayName,
-            serverName,
-            createdAt,
-            isMfaEnabled: userData.mfa_enabled ? '✅ 2차 인증 활성화됨' : '❌ 2차 인증 미사용',
-            verifiedAt,
-            ipDisplay,
-            ipLocation,
-            ispInfo,
-            browser,
-            os,
-            altAccountCheck
-        });
 
         const filePath = path.join(__dirname, `guilds_${userId}.txt`);
         fs.writeFileSync(filePath, guildsTextContent, 'utf8');
