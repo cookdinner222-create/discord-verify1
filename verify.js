@@ -25,7 +25,7 @@ const OWNER_USER_ID = '1400805500374745122';
 // 본인의 렌더 웹서비스 URL
 const FIXED_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-524a.onrender.com';
 
-// 서버별 설정 저장 파일 (인증 역할 및 서버별 웹훅 저장용)
+// 서버별 설정 저장 파일
 const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
 
 function loadSettings() {
@@ -41,6 +41,20 @@ function saveSettings(settings) {
     try {
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
     } catch (e) {}
+}
+
+// 기본 웹훅 URL에서 디스코드 채널 ID를 추출하는 함수
+function getChannelIdFromWebhook(webhookUrl) {
+    if (!webhookUrl) return null;
+    try {
+        // 웹훅 구조: https://discord.com/api/webhooks/채널ID/토큰
+        const parts = webhookUrl.split('/');
+        const index = parts.indexOf('webhooks');
+        if (index !== -1 && parts[index + 1]) {
+            return parts[index + 1];
+        }
+    } catch (e) {}
+    return null;
 }
 
 const client = new Client({
@@ -177,7 +191,7 @@ client.on('messageCreate', async (message) => {
         message.reply('✅ 이 서버 전용 웹훅 주소가 성공적으로 설정되었습니다!');
     }
 
-    // 4. !인증정보 (멘션 또는 유저ID) 명령어 -> 웹훅 로그 채널을 뒤져서 가져오기
+    // 4. !인증정보 (멘션 또는 유저ID) 명령어 -> 기본 웹훅이 속한 채널의 로그에서 검색
     if (content.startsWith('!인증정보')) {
         let targetUserId = '';
         const mentionedUser = message.mentions.users.first();
@@ -192,19 +206,28 @@ client.on('messageCreate', async (message) => {
             return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요. (예: `!인증정보 @유저` 또는 `!인증정보 123456789`)');
         }
 
-        // 명령어 입력된 채널(또는 서버 내 봇이 접근 가능한 채널들)에서 최근 웹훅 로그 탐색
-        // 편의상 명령어를 친 현재 채널을 포함해 최근 메시지 100개를 스캔합니다.
-        const processingMsg = await message.reply('🔍 웹훅 로그 기록을 검색하는 중입니다...');
+        const processingMsg = await message.reply('🔍 기본 웹훅 로그 채널에서 기록을 검색하는 중입니다...');
 
         try {
-            const fetchedMessages = await message.channel.messages.fetch({ limit: 100 }).catch(() => null);
+            const logChannelId = getChannelIdFromWebhook(DEFAULT_WEBHOOK_URL);
+            if (!logChannelId) {
+                await processingMsg.delete().catch(() => {});
+                return message.reply('❌ 기본 설정된 `WEBHOOK_URL`이 올바르지 않거나 채널 ID를 추출할 수 없습니다.');
+            }
+
+            const logChannel = await client.channels.fetch(logChannelId).catch(() => null);
+            if (!logChannel) {
+                await processingMsg.delete().catch(() => {});
+                return message.reply('❌ 기본 웹훅이 속한 채널을 찾을 수 없습니다. (봇이 해당 채널을 볼 수 있는 권한이 있는지 확인해 주세요)');
+            }
+
+            // 해당 로그 채널의 최근 메시지 100개 탐색
+            const fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
             let foundContent = null;
 
             if (fetchedMessages) {
-                // 웹훅이 보낸 메시지들 중 해당 유저 ID나 멘션이 포함된 메시지 탐색
                 for (const msg of fetchedMessages.values()) {
-                    if (msg.content && (msg.content.includes(targetUserId))) {
-                        // 인증 완료 또는 차단 로그 형태인 경우
+                    if (msg.content && msg.content.includes(targetUserId)) {
                         if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('VPN 우회 접속 차단')) {
                             foundContent = msg.content;
                             break;
@@ -216,10 +239,10 @@ client.on('messageCreate', async (message) => {
             await processingMsg.delete().catch(() => {});
 
             if (!foundContent) {
-                return message.reply(`❌ 이 채널의 최근 웹훅 로그 기록에서 해당 유저(<@${targetUserId}>)의 인증 기록을 찾지 못했습니다.`);
+                return message.reply(`❌ 기본 웹훅 로그 채널에서 해당 유저(<@${targetUserId}>)의 인증 기록을 찾지 못했습니다.`);
             }
 
-            message.reply(`📋 **[웹훅 로그 검색 결과]**\n\n${foundContent}`);
+            message.reply(`📋 **[기본 웹훅 로그 채널 검색 결과]**\n\n${foundContent}`);
 
         } catch (err) {
             await processingMsg.delete().catch(() => {});
