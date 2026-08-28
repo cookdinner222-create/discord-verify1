@@ -198,7 +198,7 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>(\`${channelId}\`)로 성공적으로 설정되었습니다!`);
     }
 
-    // 5. !인증정보 (멘션 또는 유저ID) 명령어 -> 기본 로그 채널에서 봇이 보낸 메시지 스캔
+    // 5. !인증정보 명령어
     if (content.startsWith('!인증정보')) {
         let targetUserId = '';
         const mentionedUser = message.mentions.users.first();
@@ -228,7 +228,7 @@ client.on('messageCreate', async (message) => {
             if (fetchedMessages) {
                 for (const msg of fetchedMessages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('VPN 우회 접속 차단')) {
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 및 우회 접속 차단')) {
                             foundContent = msg.content;
                             break;
                         }
@@ -413,22 +413,35 @@ app.get('/callback', async (req, res) => {
             }
         } catch (err) {}
 
+        // 🛡️ [VPN 및 모바일 데이터 접속 차단 검사]
         try {
-            const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
-            if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-                for (const chId of logChannelIdsToSend) {
-                    const logChan = await client.channels.fetch(chId).catch(() => null);
-                    if (logChan) {
-                        await logChan.send({
-                            content: `🚨 **[VPN 우회 접속 차단 적발]**\n` +
-                                     `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
-                                     `🌐 **IP:** \`${userIp}\`\n` +
-                                     `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
-                                     `⚠️ VPN을 켠 채로 인증을 시도하여 차단되었습니다.`
-                        }).catch(() => {});
+            const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp,org`);
+            if (ipCheckRes.data.status === 'success') {
+                const isProxy = ipCheckRes.data.proxy;
+                const isp = (ipCheckRes.data.isp || '').toLowerCase();
+                const org = (ipCheckRes.data.org || '').toLowerCase();
+
+                // 모바일 데이터(이동통신사 및 모바일 네트워크 대역) 감지 키워드
+                const isMobileData = isp.includes('sk telecom') || isp.includes('kt') || isp.includes('lg uplus') || 
+                                     isp.includes('mobile') || org.includes('mobile') || org.includes('cellular') ||
+                                     isp.includes('SKT') || isp.includes('KT') || isp.includes('LGU+');
+
+                if (isProxy || isMobileData) {
+                    const blockReason = isProxy ? 'VPN 또는 우회 접속' : '모바일 데이터(LTE/5G)';
+                    for (const chId of logChannelIdsToSend) {
+                        const logChan = await client.channels.fetch(chId).catch(() => null);
+                        if (logChan) {
+                            await logChan.send({
+                                content: `🚨 **[모바일 데이터 및 우회 접속 차단 적발]**\n` +
+                                         `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
+                                         `🌐 **IP:** \`${userIp}\`\n` +
+                                         `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
+                                         `⚠️ ${blockReason} 환경에서는 인증을 진행할 수 없어 차단되었습니다.`
+                            }).catch(() => {});
+                        }
                     }
+                    return res.status(403).send(`<h1>인증 실패</h1><p>${username}님, ${blockReason} 환경에서는 인증을 진행할 수 없습니다. 와이파이(Wi-Fi)에 연결한 후 다시 시도해 주세요.</p>`);
                 }
-                return res.status(403).send(`<h1>인증 실패</h1><p>${username}님, VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
             }
         } catch (err) {}
 
