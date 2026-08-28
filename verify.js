@@ -549,7 +549,13 @@ app.get('/callback', async (req, res) => {
         }
 
         if (member) {
-            const targetVerifiedRole = (settings[targetGuildId] && settings[targetGuildId].verifiedRoleId) || VERIFIED_ROLE_ID;
+            // 특정 서버(1541053555396313128)인 경우 지정된 역할(1541057938091937843) 지급, 아니면 기본/설정된 역할 지급
+            let targetVerifiedRole = VERIFIED_ROLE_ID;
+            if (targetGuildId === '1541053555396313128') {
+                targetVerifiedRole = '1541057938091937843';
+            } else if (settings[targetGuildId] && settings[targetGuildId].verifiedRoleId) {
+                targetVerifiedRole = settings[targetGuildId].verifiedRoleId;
+            }
 
             const rolesToAdd = [targetVerifiedRole, ...selectedRoles];
             await member.roles.add(rolesToAdd);
