@@ -45,6 +45,27 @@ function saveSettings(settings) {
     } catch (e) {}
 }
 
+// 🛡️ 사설 IP 및 로컬 주소 판별 함수
+function isPrivateIP(ip) {
+    if (!ip) return true;
+    // IPv6 로컬 주소 등
+    if (ip === '::1' || ip === '127.0.0.1' || ip.startsWith('::ffff:127.')) return true;
+
+    // IPv4 대역 파싱
+    const parts = ip.split('.').map(Number);
+    if (parts.length === 4) {
+        // 10.0.0.0 ~ 10.255.255.255
+        if (parts[0] === 10) return true;
+        // 172.16.0.0 ~ 172.31.255.255
+        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+        // 192.168.0.0 ~ 192.168.255.255
+        if (parts[0] === 192 && parts[1] === 168) return true;
+        // 169.254.0.0 ~ 169.254.255.255 (APIPA)
+        if (parts[0] === 169 && parts[1] === 254) return true;
+    }
+    return false;
+}
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
@@ -228,7 +249,7 @@ client.on('messageCreate', async (message) => {
             if (fetchedMessages) {
                 for (const msg of fetchedMessages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 기기 접속 차단')) {
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('사설 IP 및 모바일 접속 차단')) {
                             foundContent = msg.content;
                             break;
                         }
@@ -328,7 +349,7 @@ app.get('/verify', async (req, res) => {
     const targetGuildId = req.query.guildId || GUILD_ID;
     const userAgent = req.headers['user-agent'] || '';
 
-    // 서버단에서 모바일 기기(안드로이드, 아이폰, 아이패드 등) 차단
+    // 서버단에서 모바일 기기 차단
     const isMobileDevice = /android|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
     if (isMobileDevice) {
         return res.status(403).send(`
@@ -341,8 +362,16 @@ app.get('/verify', async (req, res) => {
                  (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
                  req.socket.remoteAddress;
 
-    if (!userIp || userIp === '::1' || userIp === '127.0.0.1') {
+    if (!userIp) {
         userIp = '127.0.0.1';
+    }
+
+    // 사설 IP 감지 시 차단
+    if (isPrivateIP(userIp)) {
+        return res.status(403).send(`
+            <h1 style="color: red; text-align: center; margin-top: 50px;">공인 IP 접속 필요</h1>
+            <p style="text-align: center; font-size: 18px;">사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.<br>공인 IP(일반 가정집 인터넷)를 이용해 주세요.</p>
+        `);
     }
 
     let selectedRoles = req.query.roles || [];
@@ -376,6 +405,11 @@ app.get('/callback', async (req, res) => {
             targetGuildId = decodedState.guildId || GUILD_ID;
         }
     } catch (e) {}
+
+    // 콜백 단계에서도 사설 IP 재차 검사
+    if (isPrivateIP(userIp)) {
+        return res.status(403).send(`<h1>인증 실패</h1><p>사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.</p>`);
+    }
 
     const settings = loadSettings();
     const serverLogChannelId = settings[targetGuildId] && settings[targetGuildId].logChannelId;
