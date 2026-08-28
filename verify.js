@@ -108,7 +108,6 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 봇이 켜질 때 기본 로그 채널에서 과거 기록을 자동으로 읽어와 복구 (재배포 초기화 방지)
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
     try {
@@ -119,7 +118,6 @@ client.on('ready', async () => {
                 let restoredCount = 0;
                 for (const msg of messages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes('인증 완료 상세 정보')) {
-                        // 메시지 내용에서 유저 ID 추출 (<@유저ID> 형태 파싱)
                         const match = msg.content.match(/<@(\d+)>/);
                         if (match && match[1]) {
                             const userId = match[1];
@@ -131,7 +129,7 @@ client.on('ready', async () => {
                         }
                     }
                 }
-                console.log(`[로그 복구 완료] 로그 채널에서 총 ${restoredCount개의 유저 인증 기록을 복구했습니다.`);
+                console.log(`[로그 복구 완료] 로그 채널에서 총 ${restoredCount}개의 유저 인증 기록을 복구했습니다.`);
             }
         }
     } catch (e) {
@@ -147,14 +145,12 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     const guildId = message.guild.id;
 
-    // 🔒 오직 본인(OWNER_USER_ID)만 명령어 사용 가능
     if (content === '!인증' || content.startsWith('!인증역할') || content.startsWith('!아이디') || content.startsWith('!인증정보') || content === '!역할제거') {
         if (userId !== OWNER_USER_ID) {
             return message.reply('❌ 이 명령어를 사용할 권한이 없습니다.');
         }
     }
 
-    // 1. !인증 명령어
     if (content === '!인증') {
         try {
             await message.delete().catch(() => {});
@@ -185,7 +181,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 2. !인증역할 (역할아이디) 명령어
     if (content.startsWith('!인증역할')) {
         const args = content.split(' ');
         const roleId = args[1];
@@ -207,7 +202,6 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 성공적으로 설정되었습니다!`);
     }
 
-    // 3. !아이디 (채널아이디) 명령어
     if (content.startsWith('!아이디')) {
         const args = content.split(' ');
         const channelId = args[1];
@@ -229,7 +223,6 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>(\`${channelId}\`)로 성공적으로 설정되었습니다!`);
     }
 
-    // 4. !인증정보 (멘션 또는 유저ID) 명령어 -> 내부 저장소에서 즉시 조회
     if (content.startsWith('!인증정보')) {
         let targetUserId = '';
         const mentionedUser = message.mentions.users.first();
@@ -254,7 +247,6 @@ client.on('messageCreate', async (message) => {
         message.reply(`📋 **[유저 인증 기록 조회 결과]**\n\n${userLog.logContent}`);
     }
 
-    // 5. !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -274,7 +266,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 6. !서버복구 명령어
     if (content === '!서버복구') {
         try {
             const member = message.member;
@@ -400,7 +391,6 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
-        // 🛡️ [중복 인증 방지 검사] 이미 인증된 유저인지 내부 저장소에서 즉시 차단
         const existingLogs = loadUserLogs();
         if (existingLogs[userId]) {
             return res.status(400).send(`<h1>인증 실패</h1><p>${username}님, 이미 인증을 완료한 계정입니다. 중복 인증을 진행할 수 없습니다!</p>`);
@@ -522,7 +512,6 @@ app.get('/callback', async (req, res) => {
                                   `💻 **기기 정보 (브라우저 / OS):** \`${browser} / ${os}\`\n` +
                                   `⚠️ **부계정 추정 여부:** ${altAccountCheck}`;
 
-        // 내부 로그 저장소에 영구 저장 (중복 방지 및 !인증정보 즉시 조회용)
         saveUserLog(userId, { logContent: logMessageContent });
 
         for (const chId of logChannelIdsToSend) {
