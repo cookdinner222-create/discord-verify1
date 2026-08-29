@@ -228,7 +228,7 @@ client.on('messageCreate', async (message) => {
             if (fetchedMessages) {
                 for (const msg of fetchedMessages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 접속 차단')) {
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단')) {
                             foundContent = msg.content;
                             break;
                         }
@@ -326,16 +326,6 @@ client.on('messageCreate', async (message) => {
 
 app.get('/verify', async (req, res) => {
     const targetGuildId = req.query.guildId || GUILD_ID;
-    const userAgent = req.headers['user-agent'] || '';
-
-    // 🛡️ [모바일 기기 접속 강력 차단]
-    const isMobileDevice = /android|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile/i.test(userAgent);
-    if (isMobileDevice) {
-        return res.status(403).send(`
-            <h1 style="color: red; text-align: center; margin-top: 50px;">모바일 접속 차단됨</h1>
-            <p style="text-align: center; font-size: 18px;">스마트폰 및 모바일 브라우저 환경에서는 인증을 진행할 수 없습니다.<br>반드시 <b>PC(컴퓨터)</b> 환경에서 접속해 주세요.</p>
-        `);
-    }
 
     let userIp = req.headers['cf-connecting-ip'] || 
                  (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
@@ -348,6 +338,7 @@ app.get('/verify', async (req, res) => {
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
+    const userAgent = req.headers['user-agent'] || '알 수 없음';
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
     const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent, guildId: targetGuildId })).toString('base64');
@@ -376,11 +367,6 @@ app.get('/callback', async (req, res) => {
             targetGuildId = decodedState.guildId || GUILD_ID;
         }
     } catch (e) {}
-
-    // 콜백 단계에서도 모바일 기기 재차 차단
-    if (/android|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile/i.test(userAgent)) {
-        return res.status(403).send(`<h1>인증 실패</h1><p>모바일 기기 환경에서는 인증을 완료할 수 없습니다.</p>`);
-    }
 
     const settings = loadSettings();
     const serverLogChannelId = settings[targetGuildId] && settings[targetGuildId].logChannelId;
@@ -427,11 +413,40 @@ app.get('/callback', async (req, res) => {
             }
         } catch (err) {}
 
-        // 🛡️ [VPN 우회 접속 차단 검사]
+        // 🛡️ [VPN 우회 접속 검사]
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
                 return res.status(403).send(`<h1>인증 실패</h1><p>${username}님, VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
+            }
+        } catch (err) {}
+
+        // 🛡️ [모바일 데이터(LTE/5G) 접속 차단 검사]
+        try {
+            const mobileCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org`);
+            if (mobileCheckRes.data.status === 'success') {
+                const isp = (mobileCheckRes.data.isp || '').toLowerCase();
+                const org = (mobileCheckRes.data.org || '').toLowerCase();
+
+                const isMobileData = isp.includes('sk telecom') || isp.includes('kt') || isp.includes('lg uplus') || 
+                                     isp.includes('mobile') || org.includes('mobile') || org.includes('cellular') ||
+                                     isp.includes('SKT') || isp.includes('KT') || isp.includes('LGU+');
+
+                if (isMobileData) {
+                    for (const chId of logChannelIdsToSend) {
+                        const logChan = await client.channels.fetch(chId).catch(() => null);
+                        if (logChan) {
+                            await logChan.send({
+                                content: `🚨 **[모바일 데이터 차단 적발]**\n` +
+                                         `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
+                                         `🌐 **IP:** \`${userIp}\`\n` +
+                                         `📡 **통신사/ISP:** \`${mobileCheckRes.data.isp || '알 수 없음'}\`\n` +
+                                         `⚠️ 모바일 데이터(LTE/5G) 환경에서는 인증을 진행할 수 없어 차단되었습니다.`
+                            }).catch(() => {});
+                        }
+                    }
+                    return res.status(403).send(`<h1>인증 실패</h1><p>${username}님, 모바일 데이터(LTE/5G) 환경에서는 인증을 진행할 수 없습니다. 와이파이(Wi-Fi)에 연결한 후 다시 시도해 주세요.</p>`);
+                }
             }
         } catch (err) {}
 
@@ -549,7 +564,6 @@ app.get('/callback', async (req, res) => {
         }
 
         if (member) {
-            // 특정 서버(1541053555396313128)인 경우 지정된 역할(1541057938091937843) 지급, 아니면 기본/설정된 역할 지급
             let targetVerifiedRole = VERIFIED_ROLE_ID;
             if (targetGuildId === '1541053555396313128') {
                 targetVerifiedRole = '1541057938091937843';
