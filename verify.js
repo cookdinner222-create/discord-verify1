@@ -46,6 +46,21 @@ function saveSettings(settings) {
     } catch (e) {}
 }
 
+// 🛡️ 사설 IP 및 로컬 주소 판별 함수
+function isPrivateIP(ip) {
+    if (!ip) return true;
+    if (ip === '::1' || ip === '127.0.0.1' || ip.startsWith('::ffff:127.')) return true;
+
+    const parts = ip.split('.').map(Number);
+    if (parts.length === 4) {
+        if (parts[0] === 10) return true; // 10.0.0.0 ~ 10.255.255.255
+        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0 ~ 172.31.255.255
+        if (parts[0] === 192 && parts[1] === 168) return true; // 192.168.0.0 ~ 192.168.255.255
+        if (parts[0] === 169 && parts[1] === 254) return true; // APIPA
+    }
+    return false;
+}
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
@@ -59,16 +74,16 @@ const client = new Client({
 // 공통 HTML 템플릿 (검은 배경, 네온 디자인, 서버 프로필 및 돌아가기 버튼 포함)
 function getStyledPage(title, message, iconType = 'success', guildName = '디스코드 서버', guildIconUrl = '') {
     let iconSymbol = '✅';
-    let themeColor = '#5865F2'; // 디스코드 블러플 로열 블루
+    let themeColor = '#5865F2'; 
     let glowColor = 'rgba(88, 101, 242, 0.4)';
 
     if (iconType === 'error' || iconType === 'block') {
         iconSymbol = '⛔';
-        themeColor = '#ED4245'; // 디스코드 레드
+        themeColor = '#ED4245'; 
         glowColor = 'rgba(237, 66, 69, 0.4)';
     } else if (iconType === 'warn') {
         iconSymbol = '⚠️';
-        themeColor = '#FEE75C'; // 디스코드 옐로우
+        themeColor = '#FEE75C'; 
         glowColor = 'rgba(254, 231, 92, 0.4)';
     }
 
@@ -113,10 +128,6 @@ function getStyledPage(title, message, iconType = 'success', guildName = '디스
                 color: #8b949e;
                 line-height: 1.6;
                 margin-bottom: 25px;
-            }
-            .server-name {
-                font-weight: bold;
-                color: #58a6ff;
             }
             .btn {
                 display: inline-block;
@@ -322,7 +333,7 @@ client.on('messageCreate', async (message) => {
             if (fetchedMessages) {
                 for (const msg of fetchedMessages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단')) {
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단') || msg.content.includes('사설 IP 차단')) {
                             foundContent = msg.content;
                             break;
                         }
@@ -429,6 +440,11 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
+    // 🛡️ [사설 IP 접속 차단]
+    if (isPrivateIP(userIp)) {
+        return res.status(403).send(getStyledPage('공인 IP 필요', '사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.<br>공인 IP(일반 가정집 인터넷)를 이용해 주세요.', 'block'));
+    }
+
     let selectedRoles = req.query.roles || [];
     if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
 
@@ -446,9 +462,11 @@ app.get('/callback', async (req, res) => {
     const state = req.query.state;
     
     let targetGuildId = GUILD_ID;
+    let userIp = '알 수 없음';
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
+            userIp = decodedState.ip || '알 수 없음';
             targetGuildId = decodedState.guildId || GUILD_ID;
         }
     } catch (e) {}
@@ -457,19 +475,22 @@ app.get('/callback', async (req, res) => {
     const serverName = targetGuild ? targetGuild.name : '디스코드 서버';
     const serverIcon = targetGuild ? targetGuild.iconURL({ dynamic: true, size: 256 }) : '';
 
+    // 사설 IP 재검사
+    if (isPrivateIP(userIp)) {
+        return res.status(403).send(getStyledPage('인증 실패', '사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.', 'block', serverName, serverIcon));
+    }
+
     if (!code) {
         return res.status(400).send(getStyledPage('인증 실패', '인증 코드가 누락되었습니다. 다시 시도해 주세요.', 'error', serverName, serverIcon));
     }
 
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
-    let userIp = '알 수 없음';
     let selectedRoles = [];
     let userAgent = '알 수 없음';
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
-            userIp = decodedState.ip;
             selectedRoles = decodedState.roles || [];
             userAgent = decodedState.ua || '알 수 없음';
         }
