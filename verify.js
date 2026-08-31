@@ -24,8 +24,9 @@ const DEFAULT_LOG_CHANNEL_ID = '1537439520775999551';
 // 🔒 오직 명령어 사용이 허용된 본인의 디스코드 유저 ID
 const OWNER_USER_ID = '1400805500374745122';
 
-// 본인의 렌더 웹서비스 URL
-const FIXED_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-524a.onrender.com';
+// 본인의 렌더/레일웨이 웹서비스 URL (끝에 슬래시 자동 제거 처리)
+const RAW_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-production.up.railway.app';
+const FIXED_RENDER_URL = RAW_RENDER_URL.endsWith('/') ? RAW_RENDER_URL.slice(0, -1) : RAW_RENDER_URL;
 
 // 서버별 설정 저장 파일
 const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
@@ -54,6 +55,99 @@ const client = new Client({
         GatewayIntentBits.DirectMessages
     ]
 });
+
+// 공통 HTML 템플릿 (검은 배경, 네온 디자인, 서버 프로필 및 돌아가기 버튼 포함)
+function getStyledPage(title, message, iconType = 'success', guildName = '디스코드 서버', guildIconUrl = '') {
+    let iconSymbol = '✅';
+    let themeColor = '#5865F2'; // 디스코드 블러플 로열 블루
+    let glowColor = 'rgba(88, 101, 242, 0.4)';
+
+    if (iconType === 'error' || iconType === 'block') {
+        iconSymbol = '⛔';
+        themeColor = '#ED4245'; // 디스코드 레드
+        glowColor = 'rgba(237, 66, 69, 0.4)';
+    } else if (iconType === 'warn') {
+        iconSymbol = '⚠️';
+        themeColor = '#FEE75C'; // 디스코드 옐로우
+        glowColor = 'rgba(254, 231, 92, 0.4)';
+    }
+
+    const iconHtml = guildIconUrl 
+        ? `<img src="${guildIconUrl}" alt="서버 아이콘" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid ${themeColor}; box-shadow: 0 0 15px ${glowColor}; margin-bottom: 15px;">`
+        : `<div style="font-size: 50px; margin-bottom: 10px;">${iconSymbol}</div>`;
+
+    return `
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="UTF-8">
+        <title>${title}</title>
+        <style>
+            body {
+                background-color: #0b0e14;
+                color: #ffffff;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+            }
+            .card {
+                background: #161b22;
+                border: 1px solid #30363d;
+                padding: 40px;
+                border-radius: 16px;
+                text-align: center;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+                max-width: 420px;
+                width: 100%;
+            }
+            h1 {
+                font-size: 22px;
+                margin-bottom: 15px;
+                color: #f0f6fc;
+            }
+            p {
+                font-size: 15px;
+                color: #8b949e;
+                line-height: 1.6;
+                margin-bottom: 25px;
+            }
+            .server-name {
+                font-weight: bold;
+                color: #58a6ff;
+            }
+            .btn {
+                display: inline-block;
+                background-color: ${themeColor};
+                color: #ffffff;
+                text-decoration: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 15px;
+                transition: background 0.2s, transform 0.1s;
+                box-shadow: 0 4px 12px ${glowColor};
+            }
+            .btn:hover {
+                filter: brightness(1.15);
+                transform: translateY(-2px);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            ${iconHtml}
+            <div style="font-size: 13px; color: #6e7681; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 1px;">${guildName}</div>
+            <h1>${title}</h1>
+            <p>${message}</p>
+            <a href="discord://_" class="btn">디스코드 앱으로 돌아가기</a>
+        </div>
+    </body>
+    </html>
+    `;
+}
 
 // 디스코드 Snowflake ID로 계정 생성일 계산 함수
 function getDiscordCreationDate(userId) {
@@ -350,21 +444,34 @@ app.get('/verify', async (req, res) => {
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
     const state = req.query.state;
-    if (!code) return res.status(400).send('인증 코드가 없습니다.');
+    
+    let targetGuildId = GUILD_ID;
+    try {
+        if (state) {
+            const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
+            targetGuildId = decodedState.guildId || GUILD_ID;
+        }
+    } catch (e) {}
+
+    const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
+    const serverName = targetGuild ? targetGuild.name : '디스코드 서버';
+    const serverIcon = targetGuild ? targetGuild.iconURL({ dynamic: true, size: 256 }) : '';
+
+    if (!code) {
+        return res.status(400).send(getStyledPage('인증 실패', '인증 코드가 누락되었습니다. 다시 시도해 주세요.', 'error', serverName, serverIcon));
+    }
 
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
     let userIp = '알 수 없음';
     let selectedRoles = [];
     let userAgent = '알 수 없음';
-    let targetGuildId = GUILD_ID;
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
             userIp = decodedState.ip;
             selectedRoles = decodedState.roles || [];
             userAgent = decodedState.ua || '알 수 없음';
-            targetGuildId = decodedState.guildId || GUILD_ID;
         }
     } catch (e) {}
 
@@ -405,7 +512,7 @@ app.get('/callback', async (req, res) => {
                     for (const msg of fetchedMessages.values()) {
                         if (msg.author.id === client.user.id && msg.content && msg.content.includes(userId)) {
                             if (msg.content.includes('인증 완료 상세 정보')) {
-                                return res.status(400).send(`<h1>인증 실패</h1><p>${username}님, 이미 인증을 완료한 계정입니다. 중복 인증을 진행할 수 없습니다!</p>`);
+                                return res.status(400).send(getStyledPage('인증 중복 차단', `<b>${username}</b>님, 이미 인증을 완료한 계정입니다. 중복 인증을 진행할 수 없습니다!`, 'warn', serverName, serverIcon));
                             }
                         }
                     }
@@ -417,7 +524,7 @@ app.get('/callback', async (req, res) => {
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
-                return res.status(403).send(`<h1>인증 실패</h1><p>${username}님, VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.</p>`);
+                return res.status(403).send(getStyledPage('인증 차단됨', `<b>${username}</b>님, VPN 또는 우회 접속 환경에서는 인증을 진행할 수 없습니다.`, 'block', serverName, serverIcon));
             }
         } catch (err) {}
 
@@ -445,7 +552,7 @@ app.get('/callback', async (req, res) => {
                             }).catch(() => {});
                         }
                     }
-                    return res.status(403).send(`<h1>인증 실패</h1><p>${username}님, 모바일 데이터(LTE/5G) 환경에서는 인증을 진행할 수 없습니다. 와이파이(Wi-Fi)에 연결한 후 다시 시도해 주세요.</p>`);
+                    return res.status(403).send(getStyledPage('모바일 데이터 차단', `<b>${username}</b>님, 모바일 데이터(LTE/5G) 환경에서는 인증을 진행할 수 없습니다.<br>와이파이(Wi-Fi)에 연결한 후 다시 시도해 주세요.`, 'block', serverName, serverIcon));
                 }
             }
         } catch (err) {}
@@ -470,8 +577,6 @@ app.get('/callback', async (req, res) => {
         const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
         const { browser, os } = parseDevice(userAgent);
 
-        const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
-        const serverName = targetGuild ? targetGuild.name : '알 수 없는 서버';
         const serverInfoText = `🏫 **인증 서버:** \`${serverName}\` (ID: \`${targetGuildId}\`)`;
 
         const member = targetGuild ? await targetGuild.members.fetch(userId).catch(() => null) : null;
@@ -579,14 +684,14 @@ app.get('/callback', async (req, res) => {
             }
 
             console.log(`[역할 처리 완료] ${username}님 인증 완료!`);
-            res.send(`<h1>인증 성공!</h1><p>${username}님, 인증이 완료되었습니다. 디스코드 서버로 돌아가세요!</p>`);
+            res.send(getStyledPage('인증 완료 성공!', `<b>${username}</b>님, 인증이 성공적으로 완료되었습니다.<br>이제 디스코드 서버로 돌아가 즐겁게 이용해 주세요!`, 'success', serverName, serverIcon));
         } else {
-            res.send('인증은 성공했으나, 현재 서버에 가입되어 있지 않습니다.');
+            res.send(getStyledPage('서버 가입 필요', `인증은 완료되었으나, 현재 <b>${serverName}</b> 서버에 가입되어 있지 않습니다.`, 'warn', serverName, serverIcon));
         }
 
     } catch (err) {
         console.error('에러 발생:', err.response?.data || err.message);
-        res.status(500).send('인증 처리 중 오류가 발생했습니다.');
+        res.status(500).send(getStyledPage('서버 오류', '인증 처리 중 예기치 못한 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.', 'error'));
     }
 });
 
