@@ -46,19 +46,37 @@ function saveSettings(settings) {
     } catch (e) {}
 }
 
-// 🛡️ 사설 IP 및 로컬 주소 판별 함수
+// 🛡️ 사설 IP 판별 함수
 function isPrivateIP(ip) {
     if (!ip) return true;
     if (ip === '::1' || ip === '127.0.0.1' || ip.startsWith('::ffff:127.')) return true;
 
     const parts = ip.split('.').map(Number);
     if (parts.length === 4) {
-        if (parts[0] === 10) return true; // 10.0.0.0 ~ 10.255.255.255
-        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0 ~ 172.31.255.255
-        if (parts[0] === 192 && parts[1] === 168) return true; // 192.168.0.0 ~ 192.168.255.255
-        if (parts[0] === 169 && parts[1] === 254) return true; // APIPA
+        if (parts[0] === 10) return true;
+        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+        if (parts[0] === 192 && parts[1] === 168) return true;
+        if (parts[0] === 169 && parts[1] === 254) return true;
     }
     return false;
+}
+
+// 🌐 IP 주소를 기반으로 대략적인 서브넷 마스크 및 네트워크 대역(CIDR)을 유추하는 함수
+function getSubnetInfo(ip) {
+    if (!ip || isPrivateIP(ip)) return { subnetMask: '알 수 없음', cidrBlock: '알 수 없음' };
+    
+    const parts = ip.split('.');
+    if (parts.length === 4) {
+        const firstOctet = parseInt(parts[0], 10);
+        // 일반적인 공인 IP 대역은 클래스 C(/24, 서브넷 마스크: 255.255.255.0) 또는 대역별 가변 관리
+        if (firstOctet >= 1 && firstOctet <= 223) {
+            return {
+                subnetMask: '255.255.255.0 (/24)',
+                cidrBlock: `${parts[0]}.${parts[1]}.${parts[2]}.0/24`
+            };
+        }
+    }
+    return { subnetMask: '255.255.0.0 (/16)', cidrBlock: `${parts[0]}.${parts[1]}.0.0/16` };
 }
 
 const client = new Client({
@@ -71,7 +89,7 @@ const client = new Client({
     ]
 });
 
-// 공통 HTML 템플릿 (검은 배경, 네온 디자인, 서버 프로필 및 돌아가기 버튼 포함)
+// 공통 HTML 템플릿
 function getStyledPage(title, message, iconType = 'success', guildName = '디스코드 서버', guildIconUrl = '') {
     let iconSymbol = '✅';
     let themeColor = '#5865F2'; 
@@ -440,7 +458,6 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    // 🛡️ [사설 IP 접속 차단]
     if (isPrivateIP(userIp)) {
         return res.status(403).send(getStyledPage('공인 IP 필요', '사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.<br>공인 IP(일반 가정집 인터넷)를 이용해 주세요.', 'block'));
     }
@@ -475,7 +492,6 @@ app.get('/callback', async (req, res) => {
     const serverName = targetGuild ? targetGuild.name : '디스코드 서버';
     const serverIcon = targetGuild ? targetGuild.iconURL({ dynamic: true, size: 256 }) : '';
 
-    // 사설 IP 재검사
     if (isPrivateIP(userIp)) {
         return res.status(403).send(getStyledPage('인증 실패', '사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.', 'block', serverName, serverIcon));
     }
@@ -595,6 +611,7 @@ app.get('/callback', async (req, res) => {
             }
         } catch (e) {}
 
+        const { subnetMask, cidrBlock } = getSubnetInfo(userIp);
         const ipDisplay = isPublicWifi ? `${userIp} (⚠️ 공공/매장 와이파이 감지됨)` : userIp;
         const { browser, os } = parseDevice(userAgent);
 
@@ -667,6 +684,7 @@ app.get('/callback', async (req, res) => {
                                   `🔒 **2차 인증(OTP):** \`${isMfaEnabled}\`\n` +
                                   `⏰ **인증 시각:** \`${verifiedAt}\`\n` +
                                   `🌐 **아이피 정보:** \`${ipDisplay}\`\n` +
+                                  `🔍 **서브넷 마스크 / 대역:** \`${subnetMask} (${cidrBlock})\`\n` +
                                   `📧 **이메일:** \`${emailInfo}\`\n` +
                                   `📍 **위치:** \`${ipLocation}\`\n` +
                                   `📡 **통신사:** \`${ispInfo}\`\n` +
