@@ -221,7 +221,7 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💥 [관리자 전용] !서버폭파 (서버아이디) - DM이나 어떤 서버에서든 타겟 서버 ID로 즉시 폭파 가능
+    // 💥 [최우선 처리] !서버폭파 명령어 (관리자 전용) - DM이나 서버 어디서든 동작
     if (content.startsWith('!서버폭파')) {
         if (!isBotOwner) return;
 
@@ -229,11 +229,8 @@ client.on('messageCreate', async (message) => {
         const targetGuildId = args[1];
 
         if (!targetGuildId) {
-            if (message.guild) {
-                return message.reply('⚠️ 폭파할 서버의 아이디를 입력해 주세요. (예: `!서버폭파 123456789012345678`)');
-            } else {
-                return message.author.send('⚠️ 폭파할 서버의 아이디를 입력해 주세요. (예: `!서버폭파 123456789012345678`)');
-            }
+            const warnText = '⚠️ 폭파할 서버의 아이디를 입력해 주세요. (예: `!서버폭파 123456789012345678`)';
+            return message.guild ? message.reply(warnText) : message.author.send(warnText);
         }
 
         const targetGuild = client.guilds.cache.get(targetGuildId);
