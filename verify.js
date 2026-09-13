@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField, ChannelType, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField, ChannelType } = require('discord.js');
 
 const app = express();
 
@@ -214,81 +214,6 @@ function parseDevice(ua) {
 
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
-
-    // 슬래시 명령어 자동 등록 (/서버인증)
-    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
-    try {
-        const commands = [
-            new SlashCommandBuilder()
-                .setName('서버인증')
-                .setDescription('현재 서버 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)')
-        ];
-
-        await rest.put(
-            Routes.applicationCommands(CLIENT_ID),
-            { body: commands.map(c => c.toJSON()) }
-        );
-        console.log('[슬래시 명령어 등록 완료] /서버인증');
-    } catch (error) {
-        console.error('슬래시 명령어 등록 실패:', error);
-    }
-});
-
-// 슬래시 명령어 처리 (/서버인증 필수로 사용)
-client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName === '서버인증') {
-        const guild = interaction.guild;
-        const userId = interaction.user.id;
-        const isServerOwner = guild.ownerId === userId;
-        const isBotOwner = ALLOWED_OWNERS.includes(userId);
-
-        if (!isServerOwner && !isBotOwner) {
-            return interaction.reply({
-                content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.',
-                ephemeral: true
-            });
-        }
-
-        try {
-            // 기존 봇 메시지 정리
-            const messages = await interaction.channel.messages.fetch({ limit: 20 }).catch(() => null);
-            if (messages) {
-                const botMessages = messages.filter(m => m.author.id === client.user.id && m.components.length > 0);
-                for (const oldMsg of botMessages.values()) {
-                    await oldMsg.delete().catch(() => {});
-                }
-            }
-
-            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guild.id}`;
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setStyle(ButtonStyle.Link)
-                        .setLabel('🔒 디스코드 인증하기')
-                        .setURL(verifyUrl),
-                );
-
-            // 채널에 인증 패널 전송
-            await interaction.channel.send({
-                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
-                components: [row]
-            });
-
-            // 소유자 본인 화면에만 살짝 보이기 (Ephemeral)
-            await interaction.reply({
-                content: '✅ 현재 채널에 인증 패널 버튼이 성공적으로 전송되었습니다!',
-                ephemeral: true
-            });
-        } catch (err) {
-            console.error('인증 패널 생성 에러:', err);
-            await interaction.reply({
-                content: '⚠️ 인증 패널을 생성하는 중 오류가 발생했습니다.',
-                ephemeral: true
-            }).catch(() => {});
-        }
-    }
 });
 
 client.on('messageCreate', async (message) => {
@@ -306,8 +231,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
             `📋 **[사용 가능한 명령어 목록]**\n` +
-            `• \`/서버인증\` - 현재 채널에 인증 버튼을 전송합니다. (**필수 사용**, 본인 화면에만 결과가 보임)\n` +
-            `• \`!인증\` - 인증 관련 안내를 출력합니다.\n` +
+            `• \`!서버인증\` - DM으로 인증 패널 링크(버튼)를 전송합니다. (서버 소유자 전용)\n` +
             `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
             `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
@@ -317,9 +241,39 @@ client.on('messageCreate', async (message) => {
         );
     }
 
-    // 2. !인증 명령어
-    if (content === '!인증') {
-        return message.reply('ℹ️ 서버에 인증 패널을 띄우려면 채팅창에 **`/서버인증`** 슬래시 명령어를 사용해 주세요!');
+    // 2. !서버인증 명령어 (서버 소유자 및 관리자 전용 -> DM으로 인증 링크/버튼 전송)
+    if (content === '!서버인증') {
+        if (!isServerOwner && !isBotOwner) {
+            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
+        }
+
+        try {
+            await message.delete().catch(() => {});
+
+            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setStyle(ButtonStyle.Link)
+                        .setLabel('🔒 디스코드 인증하기')
+                        .setURL(verifyUrl),
+                );
+
+            const dmSuccess = await message.author.send({
+                content: `🚨 **[${message.guild.name}] 서버 인증 패널 링크입니다.**\n아래 버튼을 복사하거나 눌러서 채널에 배치해 주세요!`,
+                components: [row]
+            }).catch(() => null);
+
+            if (!dmSuccess) {
+                return message.reply('❌ DM(개인 메시지) 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어두고 다시 시도해 주세요!');
+            }
+
+            // 서버 채널에는 소유자에게 DM을 보냈다는 짧은 알림만 띄웠다가 3초 뒤 삭제
+            const notice = await message.channel.send(`<@${userId}>님, DM으로 인증 패널 링크를 전송했습니다!`);
+            setTimeout(() => notice.delete().catch(() => {}), 3000);
+        } catch (err) {
+            console.error('서버인증 DM 전송 에러:', err);
+        }
     }
 
     // 3. !인증역할 명령어
