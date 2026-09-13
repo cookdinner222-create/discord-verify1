@@ -215,30 +215,30 @@ function parseDevice(ua) {
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
 
-    // 슬래시 명령어 자동 등록
+    // 슬래시 명령어 자동 등록 (/서버인증)
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
         const commands = [
             new SlashCommandBuilder()
-                .setName('인증설정')
-                .setDescription('현재 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)')
+                .setName('서버인증')
+                .setDescription('현재 서버 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)')
         ];
 
         await rest.put(
             Routes.applicationCommands(CLIENT_ID),
             { body: commands.map(c => c.toJSON()) }
         );
-        console.log('[슬래시 명령어 등록 완료] /인증설정');
+        console.log('[슬래시 명령어 등록 완료] /서버인증');
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
     }
 });
 
-// 슬래시 명령어 인터랙션 처리 (Ephemeral 적용)
+// 슬래시 명령어 처리 (/서버인증 필수로 사용)
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === '인증설정') {
+    if (interaction.commandName === '서버인증') {
         const guild = interaction.guild;
         const userId = interaction.user.id;
         const isServerOwner = guild.ownerId === userId;
@@ -306,7 +306,8 @@ client.on('messageCreate', async (message) => {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
             `📋 **[사용 가능한 명령어 목록]**\n` +
-            `• \`/인증설정\` - 현재 채널에 인증 버튼을 전송합니다. (서버 소유자 전용, 본인 화면에만 결과가 보임)\n` +
+            `• \`/서버인증\` - 현재 채널에 인증 버튼을 전송합니다. (**필수 사용**, 본인 화면에만 결과가 보임)\n` +
+            `• \`!인증\` - 인증 관련 안내를 출력합니다.\n` +
             `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
             `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
@@ -316,7 +317,12 @@ client.on('messageCreate', async (message) => {
         );
     }
 
-    // 2. !인증역할 명령어
+    // 2. !인증 명령어
+    if (content === '!인증') {
+        return message.reply('ℹ️ 서버에 인증 패널을 띄우려면 채팅창에 **`/서버인증`** 슬래시 명령어를 사용해 주세요!');
+    }
+
+    // 3. !인증역할 명령어
     if (content.startsWith('!인증역할')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -342,7 +348,7 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 성공적으로 설정되었습니다!`);
     }
 
-    // 3. !아이디 명령어
+    // 4. !아이디 명령어
     if (content.startsWith('!아이디')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -368,7 +374,7 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>로 설정되었습니다!`);
     }
 
-    // 4. !인증정보 명령어
+    // 5. !인증정보 명령어
     if (content.startsWith('!인증정보')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -423,7 +429,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 5. !역할제거 명령어
+    // 6. !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -441,7 +447,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 6. !서버복구 명령어 (관리자 전용)
+    // 7. !서버복구 명령어 (관리자 전용)
     if (content === '!서버복구') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
@@ -497,7 +503,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !서버폭파 명령어 (관리자 전용)
+    // 8. !서버폭파 명령어 (관리자 전용)
     if (content === '!서버폭파') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
