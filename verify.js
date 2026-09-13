@@ -236,7 +236,7 @@ client.on('messageCreate', async (message) => {
             `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
-            `• \`!서버복구\` - 지정된 템플릿 기준으로 서버 채널과 역할을 자동 복구합니다. (본인 전용)\n` +
+            `• \`!서버복구\` - 현재 서버를 템플릿 구조로 자동 재구축합니다. (본인 전용)\n` +
             `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
         );
     }
@@ -401,13 +401,11 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !서버복구 명령어 (템플릿 기반 채널/역할 자동 생성 및 복구)
+    // 7. !서버복구 명령어 (템플릿 기준 서버 재구축 - 서버 내에서 실행)
     if (content === '!서버복구') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
         }
-
-        await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
 
         try {
             // 1단계: 기존 채널 전부 삭제
@@ -425,26 +423,22 @@ client.on('messageCreate', async (message) => {
             }
 
             // 3단계: 템플릿(https://discord.new/zAscdzEKZsUX) 구조 기반 새 채널/역할 생성
-            // 공지 카테고리 및 채널
             const infoCategory = await message.guild.channels.create({ name: '📌 ┃ 공지 및 정보', type: ChannelType.GuildCategory });
             await message.guild.channels.create({ name: '공지사항', type: ChannelType.GuildText, parent: infoCategory.id });
             await message.guild.channels.create({ name: '규칙', type: ChannelType.GuildText, parent: infoCategory.id });
 
-            // 인증 카테고리 및 채널
             const verifyCategory = await message.guild.channels.create({ name: '🔒 ┃ 인증 구역', type: ChannelType.GuildCategory });
             const verifyChannel = await message.guild.channels.create({ name: '인증하기', type: ChannelType.GuildText, parent: verifyCategory.id });
 
-            // 소통 카테고리 및 채널
             const chatCategory = await message.guild.channels.create({ name: '💬 ┃ 소통 공간', type: ChannelType.GuildCategory });
             await message.guild.channels.create({ name: '일반채팅', type: ChannelType.GuildText, parent: chatCategory.id });
             await message.guild.channels.create({ name: '음성채팅', type: ChannelType.GuildVoice, parent: chatCategory.id });
 
-            // 템플릿 전용 기본 역할 생성
             await message.guild.roles.create({ name: '👑 관리자', color: '#ED4245', permissions: [PermissionsBitField.Flags.Administrator] });
-            const verifiedRole = await message.guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
-            const unverifiedRole = await message.guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
+            await message.guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
+            await message.guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
-            // 새로 생성된 인증 채널에 자동으로 인증 버튼 전송
+            // 새로 생성된 인증 채널에 인증 버튼 전송
             const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
             const row = new ActionRowBuilder()
                 .addComponents(
