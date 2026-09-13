@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField, ChannelType, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField, ChannelType } = require('discord.js');
 
 const app = express();
 
@@ -214,72 +214,6 @@ function parseDevice(ua) {
 
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
-
-    // 슬래시 명령어 등록 (전역 등록)
-    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
-    try {
-        const commands = [
-            new SlashCommandBuilder()
-                .setName('인증설정')
-                .setDescription('서버에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)')
-        ];
-
-        await rest.put(
-            Routes.applicationCommands(CLIENT_ID),
-            { body: commands.map(c => c.toJSON()) }
-        );
-        console.log('[슬래시 명령어 등록 완료] /인증설정');
-    } catch (error) {
-        console.error('슬래시 명령어 등록 실패:', error);
-    }
-});
-
-// 슬래시 명령어 및 일반 메시지 핸들러
-client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName === '인증설정') {
-        const guild = interaction.guild;
-        const userId = interaction.user.id;
-        const isServerOwner = guild.ownerId === userId;
-        const isBotOwner = ALLOWED_OWNERS.includes(userId);
-
-        if (!isServerOwner && !isBotOwner) {
-            return interaction.reply({
-                content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.',
-                ephemeral: true
-            });
-        }
-
-        try {
-            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guild.id}`;
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setStyle(ButtonStyle.Link)
-                        .setLabel('🔒 디스코드 인증하기')
-                        .setURL(verifyUrl),
-                );
-
-            // 현재 채널에 인증 패널 전송
-            await interaction.channel.send({
-                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
-                components: [row]
-            });
-
-            // 소유자 본인 화면에만 살짝 보이는 메시지(Ephemeral)로 성공 알림
-            await interaction.reply({
-                content: '✅ 현재 채널에 인증 패널 버튼이 성공적으로 전송되었습니다!',
-                ephemeral: true
-            });
-        } catch (err) {
-            console.error('인증 패널 생성 에러:', err);
-            await interaction.reply({
-                content: '⚠️ 인증 패널을 생성하는 중 오류가 발생했습니다.',
-                ephemeral: true
-            }).catch(() => {});
-        }
-    }
 });
 
 client.on('messageCreate', async (message) => {
@@ -297,7 +231,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
             `📋 **[사용 가능한 명령어 목록]**\n` +
-            `• \`/인증설정\` - 현재 채널에 인증 버튼을 전송합니다. (서버 소유자 전용, 소유자 화면에만 결과가 보임)\n` +
+            `• \`!인증설정\` - 현재 채널에 인증 버튼을 전송하고, 명령어는 본인에게만 살짝 보입니다. (서버 소유자 전용)\n` +
             `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
             `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
@@ -307,7 +241,51 @@ client.on('messageCreate', async (message) => {
         );
     }
 
-    // 2. !인증역할 명령어
+    // 2. !인증설정 명령어 (서버 소유자 전용, 실행 후 명령어 삭제 및 본인에게만 결과 전송)
+    if (content === '!인증설정') {
+        if (!isServerOwner && !isBotOwner) {
+            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
+        }
+
+        try {
+            // 소유자가 입력한 명령어 메시지 삭제
+            await message.delete().catch(() => {});
+
+            // 기존에 봇이 보낸 인증 버튼이 있다면 정리
+            const messages = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
+            if (messages) {
+                const botMessages = messages.filter(m => m.author.id === client.user.id && m.components.length > 0);
+                for (const oldMsg of botMessages.values()) {
+                    await oldMsg.delete().catch(() => {});
+                }
+            }
+
+            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setStyle(ButtonStyle.Link)
+                        .setLabel('🔒 디스코드 인증하기')
+                        .setURL(verifyUrl),
+                );
+
+            // 채널에 인증 패널 전송
+            await message.channel.send({
+                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
+                components: [row]
+            });
+
+            // 소유자에게만 보이는 임시 확인 메시지를 보냈다가 3초 뒤 삭제
+            const tempNotice = await message.author.send('✅ 인증 패널이 채널에 성공적으로 전송되었습니다!').catch(() => null);
+            if (tempNotice) {
+                setTimeout(() => tempNotice.delete().catch(() => {}), 3000);
+            }
+        } catch (err) {
+            console.error('인증 패널 생성 에러:', err);
+        }
+    }
+
+    // 3. !인증역할 명령어
     if (content.startsWith('!인증역할')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -333,7 +311,7 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 성공적으로 설정되었습니다!`);
     }
 
-    // 3. !아이디 명령어
+    // 4. !아이디 명령어
     if (content.startsWith('!아이디')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -359,7 +337,7 @@ client.on('messageCreate', async (message) => {
         message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>로 설정되었습니다!`);
     }
 
-    // 4. !인증정보 명령어
+    // 5. !인증정보 명령어
     if (content.startsWith('!인증정보')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -414,7 +392,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 5. !역할제거 명령어
+    // 6. !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -432,7 +410,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 6. !서버복구 명령어 (관리자 전용)
+    // 7. !서버복구 명령어 (관리자 전용)
     if (content === '!서버복구') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
@@ -488,7 +466,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !서버폭파 명령어 (관리자 전용)
+    // 8. !서버폭파 명령어 (관리자 전용)
     if (content === '!서버폭파') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
