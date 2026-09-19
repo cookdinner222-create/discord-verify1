@@ -217,9 +217,6 @@ client.on('ready', async () => {
 });
 
 client.on('messageCreate', async (message) => {
-    // 봇 자신이 보낸 메시지나 시스템 메시지는 아예 무시
-    if (message.author.bot) return;
-
     const content = message.content.trim();
     const userId = message.author.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
@@ -321,10 +318,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // DM 채팅인 경우 명령어 외에는 반응 안 함
     if (!message.guild) return;
-
-    // ⚠️ 여기서부터는 오직 봇의 허용된 명령어('!')로 시작하는 메시지만 처리함 (일반 채팅은 완전히 무시)
     if (!content.startsWith('!')) return;
 
     const guildId = message.guild.id;
@@ -387,7 +381,6 @@ client.on('messageCreate', async (message) => {
         );
     }
 
-    // 🛡️ [필수 체크] !서버인증으로 활성화되지 않은 서버는 다른 명령어 차단
     if (!isServerActivated && !isBotOwner) {
         return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 딱 한 번 입력해 주세요.');
     }
@@ -649,7 +642,8 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
-        // 🛡️ [중복 인증 방지 검사]
+        // 🔍 [중복 인증 체크 및 로그 기록]
+        let isDuplicate = false;
         try {
             const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
             if (logChannel) {
@@ -657,8 +651,9 @@ app.get('/callback', async (req, res) => {
                 if (fetchedMessages) {
                     for (const msg of fetchedMessages.values()) {
                         if (msg.author.id === client.user.id && msg.content && msg.content.includes(userId)) {
-                            if (msg.content.includes('인증 완료 상세 정보')) {
-                                return res.status(400).send(getStyledPage('인증 중복 차단', `<b>${username}</b>님, 이미 인증을 완료한 계정입니다. 중복 인증을 진행할 수 없습니다!`, 'warn', serverName, serverIcon));
+                            if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('중복인증 완료 상세 정보')) {
+                                isDuplicate = true;
+                                break;
                             }
                         }
                     }
@@ -785,7 +780,10 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
-        const logMessageContent = `✅ **[인증 완료 상세 정보]**\n` +
+        // 로그 제목 설정 (중복 인증인 경우 "중복인증 완료 상세 정보"로 표시)
+        const logTitle = isDuplicate ? '🔄 **[중복인증 완료 상세 정보]**' : '✅ **[인증 완료 상세 정보]**';
+
+        const logMessageContent = `${logTitle}\n` +
                                   `${serverInfoText}\n` +
                                   `📌 **실제 이름(닉네임):** \`${displayName}\`\n` +
                                   `👤 **유저 멘션/아이디:** <@${userId}> (\`${username}\`)\n` +
@@ -797,7 +795,7 @@ app.get('/callback', async (req, res) => {
                                   `📧 **이메일:** \`${emailInfo}\`\n` +
                                   `📍 **위치:** \`${ipLocation}\`\n` +
                                   `📡 **통신사:** \`${ispInfo}\`\n` +
-                                  `💻 **기기 정보 (브라우저 / OS):** \`${browser} / ${os}\`\n` +
+                                  `💻 **기기 정보 (브라우저 / OS):** \`${browser} /${os}\`\n` +
                                   `⚠️ **부계정 추정 여부:** ${altAccountCheck}`;
 
         for (const chId of logChannelIdsToSend) {
