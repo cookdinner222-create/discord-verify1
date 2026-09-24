@@ -269,10 +269,16 @@ client.on('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
-        console.log('[슬래시 명령어] 테스트 서버 단독 등록 시작...');
+        console.log('[슬래시 명령어] 중복 제거 및 동기화 시작...');
+        
+        // 1. 기존에 남아있던 전역(Global) 명령어 캐시를 싹 비움 (중복 방지 핵심)
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+        console.log('[슬래시 명령어] 기존 전역 명령어 초기화 완료!');
+
+        // 2. 테스트 서버에만 깔끔하게 단독 등록
         if (GUILD_ID) {
             await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-            console.log(`[슬래시 명령어] 지정된 서버(ID: ${GUILD_ID})에 중복 없이 등록 완료![cite: 3]`);
+            console.log(`[슬래시 명령어] 지정된 테스트 서버(ID: ${GUILD_ID})에 단독 등록 완료!`);
         }
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
@@ -369,11 +375,11 @@ client.on('messageCreate', async (message) => {
 
     if (!isAdmin && isAutoCensorEnabled) {
         if (isProfane(content)) {
-            // 원본 메시지 우선 삭제 시도
+            // 메시지 삭제 권한 체크 및 실행
             const deleted = await message.delete().catch(() => null);
             if (!deleted) {
-                const failNotice = await message.channel.send(`<@${userId}>님, 욕설이 감지되었으나 봇에게 **메시지 삭제 권한**이 없습니다!`).catch(() => null);
-                if (failNotice) setTimeout(() => failNotice.delete().catch(() => {}), 4000);
+                const failNotice = await message.channel.send(`<@${userId}>님, 욕설이 감지되었으나 봇에게 **메시지 관리(메시지 삭제) 권한**이 없습니다! 채널 권한을 확인해 주세요.`);
+                setTimeout(() => failNotice.delete().catch(() => {}), 5000);
                 return;
             }
 
@@ -382,13 +388,13 @@ client.on('messageCreate', async (message) => {
                 const warningMsg = await message.channel.send(`<@${userId}>님이 욕설(비속어) 사유로 **${timeoutMinutes}분** 동안 타임아웃 당했습니다.`);
                 setTimeout(() => warningMsg.delete().catch(() => {}), 5000);
             } catch (err) {
-                const failNotice = await message.channel.send(`<@${userId}>님이 욕설을 사용했으나, 봇의 역할 위치가 낮거나 **타임아웃 권한이 없어** 타임아웃에 실패했습니다!`);
-                setTimeout(() => failNotice.delete().catch(() => {}), 5000);
+                const failNotice = await message.channel.send(`<@${userId}>님이 욕설을 사용했으나, 봇의 역할 위치가 유저보다 낮거나 **타임아웃 권한이 없어** 타임아웃 처리에 실패했습니다! (서버 설정에서 봇 역할을 맨 위로 올려주세요)`);
+                setTimeout(() => failNotice.delete().catch(() => {}), 6000);
             }
             return;
         }
 
-        // 도배 감지
+        // 도배 감지 (1분 내 동일 메시지 10회 이상)
         const now = Date.now();
         if (!userMessageHistory.has(userId)) {
             userMessageHistory.set(userId, []);
@@ -416,7 +422,7 @@ client.on('messageCreate', async (message) => {
 
                 userMessageHistory.set(userId, []);
             } catch (err) {
-                const failNotice = await message.channel.send(`<@${userId}>님이 도배를 시도했으나 **타임아웃 권한이 없습니다!**`).catch(() => null);
+                const failNotice = await message.channel.send(`<@${userId}>님이 도배를 시도했으나 **타임아웃 권한이 부족합니다!**`).catch(() => null);
                 if (failNotice) setTimeout(() => failNotice.delete().catch(() => {}), 4000);
             }
             return;
@@ -506,7 +512,6 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `✅ 전용 로그 채널이 <#${channel.id}>로 설정되었습니다!`, ephemeral: true });
     }
 
-    // 4. /서버설정 (봇 역할 위치 검사 + 타임아웃 가능/불가능 멤버 수 집계)
     if (commandName === '서버설정') {
         if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
         const isServerOwner = guild.ownerId === userId;
@@ -528,10 +533,9 @@ client.on('interactionCreate', async (interaction) => {
                     rolePositionCheck = '✅ **[완벽]** 봇의 역할이 서버 최상단에 안전하게 위치해 있습니다!';
                 }
 
-                // 멤버별 타임아웃 가능 여부 계산
                 const members = await guild.members.fetch();
                 members.forEach(m => {
-                    if (m.id === guild.ownerId || m.user.bot) return; // 소유자 및 봇 제외
+                    if (m.id === guild.ownerId || m.user.bot) return;
                     if (botMember.roles.highest.position > m.roles.highest.position) {
                         possibleCount++;
                     } else {
