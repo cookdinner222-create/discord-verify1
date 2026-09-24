@@ -456,8 +456,9 @@ client.on('interactionCreate', async (interaction) => {
         settings[guildId].activated = true;
         saveSettings(settings);
 
-        const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
+        // 💡 유저 계정 연동/권한 승인 URL (앱 내에서 계정 접근 승인 팝업 띄우기용)
+        const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify\%20email\%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 계정 승인하기').setURL(userAppAuthUrl));
 
         const dmSuccess = await user.send({
             content: `🚨 **[${guild.name}] 서버 인증 시스템이 활성화되었습니다.**\n다음 단계로 서버 내에서 **\`/인증역할\`**과 **\`/인증로그\`** 명령어를 입력해 설정을 완료해 주세요!`,
@@ -662,12 +663,10 @@ client.on('interactionCreate', async (interaction) => {
             await guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
             await guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
-            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-            
-            // 💡 텍스트 형태의 승인 링크 URL (두 번째 스크린샷 팝업 창 바로 띄우기용)[cite: 5]
-            const directAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+            // 💡 유저 계정 연동/권한 승인 URL (앱 내에서 계정 접근 승인 팝업 띄우기용)
+            const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(directAuthUrl));
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(userAppAuthUrl));
             await verifyChannel.send({ content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!', components: [row] });
         } catch (err) {}
         return;
@@ -834,7 +833,7 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 💡 /인증 명령어: 기존 인증 패널 메시지들을 모두 삭제하고 디스코드 앱 순정 승인 팝업 URL이 담긴 새로운 패널 전송[cite: 5]
+    // 💡 /인증 명령어: 기존 인증 패널 메시지들을 모두 삭제하고 유저 앱 승인 팝업 URL이 담긴 새로운 패널 전송
     if (commandName === '인증') {
         const isServerOwner = guild.ownerId === userId;
         if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
@@ -849,16 +848,16 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            // 💡 외부 경고창 없이 앱 내 승인 팝업(두 번째 스크린샷)이 바로 뜨는 인증 직행 URL[cite: 5]
-            const directAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+            // 💡 유저 계정 연동/권한 승인 URL (앱 내에서 계정 접근 승인 팝업 띄우기용)
+            const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(directAuthUrl));
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(userAppAuthUrl));
 
             await interaction.channel.send({
                 content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                 components: [row]
             });
-            return interaction.reply({ content: '✅ 기존 인증 패널을 정리하고 앱 내 승인창이 바로 뜨는 새로운 인증 패널을 전송했습니다!', ephemeral: true });
+            return interaction.reply({ content: '✅ 기존 인증 패널을 정리하고 앱 내 계정 승인창이 바로 뜨는 새로운 인증 패널을 전송했습니다!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: '⚠️ 오류가 발생했습니다.', ephemeral: true });
         }
@@ -882,11 +881,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// 💡 /verify 라우트는 굳이 거칠 필요 없이 바로 콜백으로 처리되도록 다이렉트 연결
 app.get('/verify', async (req, res) => {
     const targetGuildId = req.query.guildId || GUILD_ID;
-    const directAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId: targetGuildId })).toString('base64')}`;
-    res.redirect(directAuthUrl);
+    const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId: targetGuildId })).toString('base64')}`;
+    res.redirect(userAppAuthUrl);
 });
 
 app.get('/callback', async (req, res) => {
