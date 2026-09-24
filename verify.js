@@ -1094,7 +1094,7 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
-        // 🔒 요청하신 대로 IP, 서브넷, 이메일, 위치, 통신사, 기기정보 전체 스포일러 처리 적용
+        // 🔒 민감 정보 전체 스포일러 처리 적용
         const spoiledIp = `||${ipDisplay}||`;
         const spoiledSubnet = `||${subnetMask} (${cidrBlock})||`;
         const spoiledEmail = `||${emailInfo}||`;
