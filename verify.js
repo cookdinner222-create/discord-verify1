@@ -221,7 +221,7 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 🌐 [최우선 처리 1] !가입서버 명령어 (관리자 본인 전용) - 봇이 가입된 서버 목록 및 초대 링크 추출
+    // 🌐 [최우선 처리 1] !가입서버 명령어 (관리자 본인 전용)
     if (content === '!가입서버') {
         if (!isBotOwner) return;
 
@@ -232,7 +232,6 @@ client.on('messageCreate', async (message) => {
             for (const guild of guilds.values()) {
                 let inviteLink = '초대 링크 생성 불가';
                 try {
-                    // 서버 내 채널 중 권한이 허용되는 첫 번째 채널에서 초대 링크 생성 시도
                     const channels = await guild.channels.fetch();
                     const textChannel = channels.find(c => c && c.type === ChannelType.GuildText);
                     if (textChannel) {
@@ -249,7 +248,6 @@ client.on('messageCreate', async (message) => {
                               `-----------------------------------\n`;
             }
 
-            // DM으로 전송 (메시지가 길 경우 분할 전송)
             if (resultText.length > 2000) {
                 const chunks = resultText.match(/[\s\S]{1,1900}/g);
                 for (const chunk of chunks) {
