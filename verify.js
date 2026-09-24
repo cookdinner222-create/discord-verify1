@@ -111,7 +111,7 @@ function getStyledPage(title, message, iconType = 'success', guildName = '디스
     return `
     <!DOCTYPE html>
     <html lang="ko">
-    <head>
+    head>
         <meta charset="UTF-8">
         <title>${title}</title>
         <style>
@@ -212,7 +212,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록
+// 📌 슬래시 명령어 정의 목록 (중복 제거 및 추가 명령어 정돈)
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -236,7 +236,7 @@ const commands = [
     new SlashCommandBuilder().setName('서버설정').setDescription('봇의 역할 위치가 서버 최상단에 있는지 확인합니다. (소유자 전용)'),
     new SlashCommandBuilder()
         .setName('자동검열')
-        .setDescription('서버 내 욕설 및 도배 자동 차단(타임아웃) 기능을 켜고 끄기 설정합니다. (소유자 전용)')
+        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)')
         .addStringOption(option => 
             option.setName('상태')
                 .setDescription('켜기 또는 끄기 선택')
@@ -245,6 +245,15 @@ const commands = [
                     { name: '켜기', value: 'on' },
                     { name: '끄기', value: 'off' }
                 )),
+    new SlashCommandBuilder()
+        .setName('처벌강도')
+        .setDescription('자동검열(욕설/도배) 시 적용될 타임아웃 시간을 설정합니다. (소유자 전용)')
+        .addIntegerOption(option => 
+            option.setName('시간')
+                .setDescription('타임아웃 적용 시간 (분 단위, 예: 5)')
+                .setRequired(true)
+                .setMinValue(1)
+                .setMaxValue(10080)),
     new SlashCommandBuilder().setName('인증').setDescription('현재 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)'),
     new SlashCommandBuilder().setName('역할제거').setDescription('지정된 특정 역할을 제거합니다.'),
     new SlashCommandBuilder().setName('도움말').setDescription('봇 소개 및 명령어 목록을 확인합니다.'),
@@ -359,6 +368,7 @@ client.on('messageCreate', async (message) => {
     let settings = loadSettings();
     const guildId = message.guild.id;
     const isAutoCensorEnabled = settings[guildId] && settings[guildId].autoCensor === true;
+    const timeoutMinutes = (settings[guildId] && settings[guildId].timeoutMinutes) || 5; // 기본 5분
 
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
     const isServerOwner = message.guild.ownerId === userId;
@@ -369,10 +379,10 @@ client.on('messageCreate', async (message) => {
         if (isProfane(content)) {
             try {
                 await message.delete().catch(() => {});
-                await member.timeout(5 * 60 * 1000, '자동 타임아웃: 글로벌 욕설 및 비속어 감지됨').catch(() => {});
+                await member.timeout(timeoutMinutes * 60 * 1000, '자동 타임아웃: 글로벌 욕설 및 비속어 감지됨').catch(() => {});
                 
-                const warningMsg = await message.channel.send(`<@${userId}>님, 부적절한 언어(욕설/비속어) 사용이 감지되어 **5분간 타임아웃** 조치되었습니다.`);
-                setTimeout(() => warningMsg.delete().catch(() => {}), 4000);
+                const warningMsg = await message.channel.send(`<@${userId}>님이 욕설(비속어) 사유로 **${timeoutMinutes}분** 동안 타임아웃 당했습니다.`);
+                setTimeout(() => warningMsg.delete().catch(() => {}), 5000);
             } catch (err) {}
             return;
         }
@@ -399,10 +409,10 @@ client.on('messageCreate', async (message) => {
                     }
                 }
 
-                await member.timeout(5 * 60 * 1000, '자동 타임아웃: 도배 감지됨').catch(() => {});
+                await member.timeout(timeoutMinutes * 60 * 1000, '자동 타임아웃: 도배 감지됨').catch(() => {});
                 
-                const spamWarning = await message.channel.send(`<@${userId}>님, 도배 행위가 감지되어 **5분간 타임아웃** 조치되었습니다.`);
-                setTimeout(() => spamWarning.delete().catch(() => {}), 4000);
+                const spamWarning = await message.channel.send(`<@${userId}>님이 도배 행위 사유로 **${timeoutMinutes}분** 동안 타임아웃 당했습니다.`);
+                setTimeout(() => spamWarning.delete().catch(() => {}), 5000);
 
                 userMessageHistory.set(userId, []);
             } catch (err) {}
@@ -544,7 +554,24 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 6. /가입서버, /서버폭파, /서버복구
+    // 6. /처벌강도 명령어 (타임아웃 시간 설정)
+    if (commandName === '처벌강도') {
+        if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
+        const isServerOwner = guild.ownerId === userId;
+        if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
+
+        const minutes = interaction.options.getInteger('시간');
+        const guildId = guild.id;
+        let settings = loadSettings();
+        if (!settings[guildId]) settings[guildId] = {};
+        
+        settings[guildId].timeoutMinutes = minutes;
+        saveSettings(settings);
+
+        return interaction.reply({ content: `⏱️ **자동검열 처벌 강도가 설정되었습니다.**\n앞으로 욕설/도배 적발 시 **${minutes}분** 동안 타임아웃됩니다.`, ephemeral: true });
+    }
+
+    // 7. /가입서버, /서버폭파, /서버복구
     if (commandName === '가입서버') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
 
@@ -644,7 +671,7 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 7. /인증정보삭제 (관리자 전용)
+    // 8. /인증정보삭제 (관리자 전용)
     if (commandName === '인증정보삭제') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
 
@@ -690,7 +717,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 8. /서버역할
+    // 9. /서버역할
     if (commandName === '서버역할') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
 
@@ -714,7 +741,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 9. /역할지급
+    // 10. /역할지급
     if (commandName === '역할지급') {
         const query = interaction.options.getString('역할').trim();
         try {
@@ -742,7 +769,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 10. /서버정보
+    // 11. /서버정보
     if (commandName === '서버정보') {
         try {
             const infoText = await fetchServerInfo(guild, client);
@@ -752,7 +779,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 11. /도움말-a
+    // 12. /도움말-a
     if (commandName === '도움말-a') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
         return interaction.reply({
@@ -767,6 +794,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/서버설정\` - 봇의 역할 위치가 최상단인지 확인합니다. (소유자 전용)\n` +
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
+                     `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
                      `• \`/역할제거\` - 지정된 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
@@ -777,7 +805,7 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 12. /도움말
+    // 13. /도움말
     if (commandName === '도움말') {
         return interaction.reply({
             content: `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
@@ -789,6 +817,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/서버설정\` - 봇 역할이 최상단인지 확인합니다. (소유자 전용)\n` +
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
+                     `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
                      `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/도움말\` - 명령어 목록을 확인합니다.`,
@@ -796,7 +825,7 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 13. /인증 (버튼 전송)
+    // 14. /인증 (버튼 전송)
     if (commandName === '인증') {
         const isServerOwner = guild.ownerId === userId;
         if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
@@ -815,7 +844,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 14. /역할제거
+    // 15. /역할제거
     if (commandName === '역할제거') {
         try {
             const member = await guild.members.fetch(userId).catch(() => null);
