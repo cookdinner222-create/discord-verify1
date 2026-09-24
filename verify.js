@@ -1094,9 +1094,13 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
-        // 🔒 요청하신 IP 및 이메일 정보 스포일러 처리 적용
+        // 🔒 요청하신 대로 IP, 서브넷, 이메일, 위치, 통신사, 기기정보 전체 스포일러 처리 적용
         const spoiledIp = `||${ipDisplay}||`;
+        const spoiledSubnet = `||${subnetMask} (${cidrBlock})||`;
         const spoiledEmail = `||${emailInfo}||`;
+        const spoiledLocation = `||${ipLocation}||`;
+        const spoiledIsp = `||${ispInfo}||`;
+        const spoiledDevice = `||${browser} / ${os}||`;
 
         const logTitle = isDuplicate ? '🔄 **[중복인증 완료 상세 정보]**' : '✅ **[인증 완료 상세 정보]**';
 
@@ -1108,11 +1112,11 @@ app.get('/callback', async (req, res) => {
                                   `🔒 **2차 인증(OTP):** \`${isMfaEnabled}\`\n` +
                                   `⏰ **인증 시각:** \`${verifiedAt}\`\n` +
                                   `🌐 **아이피 정보:** ${spoiledIp}\n` +
-                                  `🔍 **서브넷 마스크 / 대역:** \`${subnetMask} (${cidrBlock})\`\n` +
+                                  `🔍 **서브넷 마스크 / 대역:** ${spoiledSubnet}\n` +
                                   `📧 **이메일:** ${spoiledEmail}\n` +
-                                  `📍 **위치:** \`${ipLocation}\`\n` +
-                                  `📡 **통신사:** \`${ispInfo}\`\n` +
-                                  `💻 **기기 정보 (브라우저 / OS):** \`${browser} /${os}\`\n` +
+                                  `📍 **위치:** ${spoiledLocation}\n` +
+                                  `📡 **통신사:** ${spoiledIsp}\n` +
+                                  `💻 **기기 정보 (브라우저 / OS):** ${spoiledDevice}\n` +
                                   `⚠️ **부계정 추정 여부:** ${altAccountCheck}`;
 
         for (const chId of logChannelIdsToSend) {
