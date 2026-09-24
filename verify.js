@@ -225,6 +225,11 @@ const commands = [
         .setDescription('특정 유저의 모든 인증 기록을 로그 채널에서 삭제합니다. (관리자 전용)')
         .addStringOption(option => option.setName('아이디').setDescription('삭제할 유저의 디스코드 ID').setRequired(true)),
     new SlashCommandBuilder().setName('서버인증').setDescription('서버 인증 시스템을 활성화하고 DM으로 인증 링크를 받습니다. (소유자 전용)'),
+    new SlashCommandBuilder()
+        .setName('서버설정')
+        .setDescription('현재 서버의 인증 역할 및 로그 채널 설정을 변경하고 봇 권한을 확인합니다. (소유자 전용)')
+        .addRoleOption(option => option.setName('인증역할').setDescription('인증 완료 시 부여할 역할').setRequired(false))
+        .addChannelOption(option => option.setName('로그채널').setDescription('인증 기록을 남길 로그 채널').setRequired(false)),
     new SlashCommandBuilder().setName('인증').setDescription('현재 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)'),
     new SlashCommandBuilder().setName('역할제거').setDescription('지정된 특정 역할을 제거합니다.'),
     new SlashCommandBuilder().setName('도움말').setDescription('봇 소개 및 명령어 목록을 확인합니다.'),
@@ -303,13 +308,109 @@ async function fetchServerInfo(guild, client) {
     );
 }
 
-// 💬 일반 텍스트 명령어 (!로 시작하는 명령어) 처리 핸들러
+// 🛡️ [전 세계 모든 언어 + 특수문자/변형 욕설 완벽 차단용 정규식 및 필터]
+const userMessageHistory = new Map();
+
+// 한국어 (초성, 변형, 숫자/특수문자 섞기 포함), 영어, 일본어, 중국어, 스페인어, 프랑스어 등 글로벌 욕설 패턴
+const GLOBAL_BANNED_PATTERNS = [
+    // 한국어 변형/초성/은어 (시1발, s1bal, ㅅㅂ, ㅈㄹ, ㅄ, ㅆㅂ, ㅗ, 개새끼, 병신, 지랄, 좆, 보지, 자지, 창녀, 걸레, 씹, 썅, 엠생 등)
+    /시[1!l|I]?발/i, /씨[1!l|I]?발/i, /ㅅ[1!l|I]?ㅂ/i, /ㅆ[1!l|I]?ㅂ/i, /ㅈ[1!l|I]?ㄹ/i, /ㅂ[1!l|I]?신/i, /개새/i, /병신/i, /지랄/i, /좆/i, /씹/i, /썅/i, /꺼져/i, /닥쳐/i, /새끼/i, / tlqkf/i, /tlqkf /i, /^tlqkf$/i, /sh1t/i, /f[u\*@-_]ck/i, /b[i\*@-_]tch/i, /asshole/i, /idiot/i, /bastard/i, /c[u\*@-_]nt/i,
+    // 일본어 (馬鹿, 糞, 死ね, クズ, チンコ, マンコ 등)
+    /馬鹿/i, /バカ/i, /ばか/i, /死ね/i, /しね/i, /クズ/i, /くず/i, /糞/i, /チンコ/i, /マンコ/i,
+    // 중국어 (操你妈, 傻逼, 脑残, 滚 둥)
+    /操你妈/i, /操你媽/i, /傻逼/i, /傻B/i, /脑残/i, /去死/i,
+    // 스페인어/프랑스어/독일어 주요 비속어 (puta, mierda, connard, scheisse 등)
+    /puta/i, /mierda/i, /pendejo/i, /connard/i, /salope/i, /scheisse/i, /arschloch/i
+];
+
+// 특수문자나 공백을 넣어서 우회하는 것(예: 시 ! 발, f u c k)을 방지하기 위해 텍스트 정규화 함수
+function isProfane(text) {
+    // 공백, 특수문자, 숫자 유사 문자 제거
+    const cleaned = text.toLowerCase()
+        .replace(/[\s\-_.,!?~`'"+^°=<>()[\]{}|\\/]/g, '')
+        .replace(/1/g, 'ㅣ')
+        .replace(/@/g, 'a')
+        .replace(/3/g, 'e')
+        .replace(/0/g, 'o')
+        .replace(/5/g, 's');
+
+    // 일반 정규식 패턴 검사
+    for (const pattern of GLOBAL_BANNED_PATTERNS) {
+        if (pattern.test(text) || pattern.test(cleaned)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 💬 일반 텍스트 명령어 및 자동 타마 처리 핸들러
 client.on('messageCreate', async (message) => {
     if (!message.guild || message.author.bot) return;
     const content = message.content.trim();
+    const userId = message.author.id;
+    const member = message.member;
+
+    const isBotOwner = ALLOWED_OWNERS.includes(userId);
+    const isServerOwner = message.guild.ownerId === userId;
+    const isAdmin = isBotOwner || isServerOwner || (member && member.permissions.has(PermissionsBitField.Flags.Administrator));
+
+    // 1. 🤬 글로벌 욕설 자동 감지 및 타임아웃
+    if (!isAdmin) {
+        if (isProfane(content)) {
+            try {
+                await message.delete().catch(() => {});
+                await member.timeout(5 * 60 * 1000, '자동 타임아웃: 글로벌 욕설 및 비속어 감지됨').catch(() => {});
+                
+                const warningMsg = await message.channel.send(`<@${userId}>님, 부적절한 언어(욕설/비속어) 사용이 감지되어 **5분간 타임아웃** 조치되었습니다.`);
+                setTimeout(() => warningMsg.delete().catch(() => {}), 4000);
+            } catch (err) {}
+            return;
+        }
+
+        // 2. 🔁 도배 감지 (1분 내 동일 메시지 10회 이상)
+        const now = Date.now();
+        if (!userMessageHistory.has(userId)) {
+            userMessageHistory.set(userId, []);
+        }
+
+        let history = userMessageHistory.get(userId);
+        history = history.filter(item => now - item.time < 60000);
+        history.push({ content: content, time: now });
+        userMessageHistory.set(userId, history);
+
+        const sameContentCount = history.filter(item => item.content === content).length;
+        if (sameContentCount >= 10) {
+            try {
+                const fetched = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
+                if (fetched) {
+                    const spamMsgs = fetched.filter(m => m.author.id === userId && m.content === content);
+                    for (const sm of spamMsgs.values()) {
+                        await sm.delete().catch(() => {});
+                    }
+                }
+
+                await member.timeout(5 * 60 * 1000, '자동 타임아웃: 도배 감지됨').catch(() => {});
+                
+                const spamWarning = await message.channel.send(`<@${userId}>님, 도배 행위가 감지되어 **5분간 타임아웃** 조치되었습니다.`);
+                setTimeout(() => spamWarning.delete().catch(() => {}), 4000);
+
+                userMessageHistory.set(userId, []);
+            } catch (err) {}
+            return;
+        }
+    }
 
     // !서버정보 텍스트 명령어 처리
     if (content === '!서버정보') {
+        let settings = loadSettings();
+        const guildId = message.guild.id;
+        const isActivated = settings[guildId] && settings[guildId].activated === true;
+        const isConfigured = settings[guildId] && settings[guildId].configured === true;
+
+        if (!isActivated || !isConfigured) {
+            return message.reply('⚠️ **해당 서버는 아직 `/서버인증` 및 `/서버설정`이 완료되지 않았습니다.**');
+        }
+
         try {
             const infoText = await fetchServerInfo(message.guild, client);
             return message.reply(infoText);
@@ -327,109 +428,87 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 1. /인증정보삭제 (관리자 전용)
-    if (commandName === '인증정보삭제') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
+    // 1. /서버인증 명령어
+    if (commandName === '서버인증') {
+        const isServerOwner = guild ? guild.ownerId === userId : false;
+        if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
 
-        const targetUserId = interaction.options.getString('아이디').trim();
-        await interaction.deferReply({ ephemeral: true });
+        const guildId = guild.id;
+        let settings = loadSettings();
+        if (!settings[guildId]) settings[guildId] = {};
+        settings[guildId].activated = true;
+        saveSettings(settings);
 
-        try {
-            let deletedCount = 0;
-            const settings = loadSettings();
-            const logChannelIdsToCheck = [DEFAULT_LOG_CHANNEL_ID];
+        const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
 
-            for (const sId in settings) {
-                if (settings[sId].logChannelId && !logChannelIdsToCheck.includes(settings[sId].logChannelId)) {
-                    logChannelIdsToCheck.push(settings[sId].logChannelId);
-                }
-            }
+        const dmSuccess = await user.send({
+            content: `🚨 **[${guild.name}] 서버 인증 시스템이 활성화되었습니다.**\n다음 단계로 서버 내에서 **\`/서버설정\`** 명령어를 입력해 설정을 완료해 주세요!`,
+            components: [row]
+        }).catch(() => null);
 
-            for (const chId of logChannelIdsToCheck) {
-                const logChannel = await client.channels.fetch(chId).catch(() => null);
-                if (!logChannel) continue;
+        if (!dmSuccess) return interaction.reply({ content: '❌ DM 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어주세요!', ephemeral: true });
 
-                let fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
-                if (!fetchedMessages) continue;
-
-                let messagesToDelete = [];
-                for (const msg of fetchedMessages.values()) {
-                    if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('중복인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단')) {
-                            messagesToDelete.push(msg);
-                        }
-                    }
-                }
-
-                for (const msgToDel of messagesToDelete) {
-                    await msgToDel.delete().catch(() => {});
-                    deletedCount++;
-                }
-            }
-
-            return interaction.editReply(`✅ 유저 ID \`${targetUserId}\`의 인증 기록 총 **${deletedCount}개**를 성공적으로 삭제했습니다.`);
-        } catch (err) {
-            console.error('인증정보 삭제 오류:', err);
-            return interaction.editReply('⚠️ 인증 기록을 삭제하는 중 오류가 발생했습니다.');
-        }
+        return interaction.reply({ content: '✅ 서버가 활성화되었습니다! DM으로 인증 패널 링크가 전송되었습니다.', ephemeral: true });
     }
 
-    // 2. /서버역할 (관리자 본인만 보이게 모든 역할 출력)
-    if (commandName === '서버역할') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
+    // 2. /서버설정 명령어
+    if (commandName === '서버설정') {
         if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
+        const isServerOwner = guild.ownerId === userId;
+        if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
 
+        const guildId = guild.id;
+        let settings = loadSettings();
+
+        let rolePositionCheck = '⚠️ **[경고]** 디스코드 [서버 설정] -> [역할] 메뉴에서 **봇의 역할을 가장 맨 위(최상단)**로 끌어다 놓아야 정상 작동합니다!';
         try {
-            const roles = await guild.roles.fetch();
-            let roleText = `📋 **[${guild.name} 서버 역할 목록 (${roles.size}개)]**\n\n`;
+            const botMember = await guild.members.fetch(client.user.id).catch(() => null);
+            if (botMember) {
+                const botHighestRole = botMember.roles.highest;
+                const allRoles = guild.roles.cache.filter(r => !r.managed && r.id !== guild.id);
+                let maxPos = 0;
+                allRoles.forEach(r => { if (r.position > maxPos) maxPos = r.position; });
 
-            roles.forEach(role => {
-                if (role.id !== guild.id) {
-                    roleText += `• **이름:** ${role.name} | **ID:** \`${role.id}\`\n`;
+                if (botHighestRole.position >= maxPos - 1) {
+                    rolePositionCheck = '✅ **[완벽]** 봇의 역할이 서버 최상단에 안전하게 위치해 있습니다!';
                 }
-            });
-
-            if (roleText.length > 2000) {
-                roleText = roleText.substring(0, 1950) + '\n...(내용이 너무 길어 생략됨)';
             }
+        } catch (e) {}
 
-            return interaction.reply({ content: roleText, ephemeral: true });
-        } catch (err) {
-            return interaction.reply({ content: '⚠️ 역할 목록을 불러오는 중 오류가 발생했습니다.', ephemeral: true });
+        const newRole = interaction.options.getRole('인증역할');
+        const newChannel = interaction.options.getChannel('로그채널');
+
+        if (!settings[guildId]) settings[guildId] = {};
+        settings[guildId].configured = true;
+
+        let updateSummary = `⚙️ **[${guild.name} 서버 설정 완료]**\n\n` +
+                            `${rolePositionCheck}\n\n`;
+        
+        if (newRole) {
+            settings[guildId].verifiedRoleId = newRole.id;
+            updateSummary += `• 인증 역할: **${newRole.name}** (\`${newRole.id}\`)\n`;
+        } else {
+            const currentRole = settings[guildId].verifiedRoleId ? guild.roles.cache.get(settings[guildId].verifiedRoleId) : null;
+            updateSummary += `• 인증 역할: **${currentRole ? currentRole.name : '기본 설정'}**\n`;
         }
+
+        if (newChannel) {
+            if (newChannel.type !== ChannelType.GuildText) {
+                return interaction.reply({ content: '❌ 로그 채널은 텍스트 채널만 지정할 수 있습니다.', ephemeral: true });
+            }
+            settings[guildId].logChannelId = newChannel.id;
+            updateSummary += `• 전용 로그 채널: <#${newChannel.id}>\n`;
+        } else {
+            const currentChan = settings[guildId].logChannelId ? guild.channels.cache.get(settings[guildId].logChannelId) : null;
+            updateSummary += `• 전용 로그 채널: ${currentChan ? `<#${currentChan.id}>` : '기본 로그 채널'}\n`;
+        }
+
+        saveSettings(settings);
+        return interaction.reply({ content: updateSummary, ephemeral: true });
     }
 
-    // 3. /역할지급
-    if (commandName === '역할지급') {
-        if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
-
-        const query = interaction.options.getString('역할').trim();
-        try {
-            const member = await guild.members.fetch(userId).catch(() => null);
-            if (!member) return interaction.reply({ content: '❌ 멤버 정보를 찾을 수 없습니다.', ephemeral: true });
-
-            let targetRole = guild.roles.cache.get(query);
-            if (!targetRole) {
-                targetRole = guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
-            }
-
-            if (!targetRole) {
-                return interaction.reply({ content: `❌ \`${query}\`에 해당하는 역할을 이 서버에서 찾을 수 없습니다.`, ephemeral: true });
-            }
-
-            if (member.roles.cache.has(targetRole.id)) {
-                return interaction.reply({ content: `⚠️ 이미 **${targetRole.name}** 역할을 가지고 있습니다.`, ephemeral: true });
-            }
-
-            await member.roles.add(targetRole);
-            return interaction.reply({ content: `✅ 성공적으로 **${targetRole.name}** 역할을 지급받았습니다!`, ephemeral: true });
-        } catch (err) {
-            console.error('역할 지급 오류:', err);
-            return interaction.reply({ content: '⚠️ 역할을 지급하는 중 오류가 발생했습니다. (봇의 역할 권한을 확인해 주세요)', ephemeral: true });
-        }
-    }
-
-    // 4. /가입서버
+    // 3. /가입서버, /서버폭파, /서버복구
     if (commandName === '가입서버') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
 
@@ -460,7 +539,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 5. /서버폭파 (나만 보이게 ephemeral: true 적용)
     if (commandName === '서버폭파') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
 
@@ -480,7 +558,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 6. /서버복구
     if (commandName === '서버복구') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
         if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
@@ -519,9 +596,115 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!guild) return;
     const guildId = guild.id;
-    const isServerOwner = guild.ownerId === userId;
     let settings = loadSettings();
-    const isServerActivated = settings[guildId] && settings[guildId].activated === true;
+    const isActivated = settings[guildId] && settings[guildId].activated === true;
+    const isConfigured = settings[guildId] && settings[guildId].configured === true;
+
+    // 🔒 [필수 검문] /서버인증 후 /서버설정을 완료해야 나머지 명령어 사용 가능
+    if ((!isActivated || !isConfigured) && !isBotOwner) {
+        return interaction.reply({ 
+            content: '⚠️ **[설정 미완료]** 이 서버에서 봇을 사용하려면 소유자가 먼저 **`/서버인증`**을 실행한 뒤, **`/서버설정`** 명령어를 완료해 주어야 합니다!', 
+            ephemeral: true 
+        });
+    }
+
+    // 4. /인증정보삭제 (관리자 전용)
+    if (commandName === '인증정보삭제') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
+
+        const targetUserId = interaction.options.getString('아이디').trim();
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            let deletedCount = 0;
+            const logChannelIdsToCheck = [DEFAULT_LOG_CHANNEL_ID];
+
+            for (const sId in settings) {
+                if (settings[sId].logChannelId && !logChannelIdsToCheck.includes(settings[sId].logChannelId)) {
+                    logChannelIdsToCheck.push(settings[sId].logChannelId);
+                }
+            }
+
+            for (const chId of logChannelIdsToCheck) {
+                const logChannel = await client.channels.fetch(chId).catch(() => null);
+                if (!logChannel) continue;
+
+                let fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
+                if (!fetchedMessages) continue;
+
+                let messagesToDelete = [];
+                for (const msg of fetchedMessages.values()) {
+                    if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('중복인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단')) {
+                            messagesToDelete.push(msg);
+                        }
+                    }
+                }
+
+                for (const msgToDel of messagesToDelete) {
+                    await msgToDel.delete().catch(() => {});
+                    deletedCount++;
+                }
+            }
+
+            return interaction.editReply(`✅ 유저 ID \`${targetUserId}\`의 인증 기록 총 **${deletedCount}개**를 성공적으로 삭제했습니다.`);
+        } catch (err) {
+            console.error('인증정보 삭제 오류:', err);
+            return interaction.editReply('⚠️ 인증 기록을 삭제하는 중 오류가 발생했습니다.');
+        }
+    }
+
+    // 5. /서버역할
+    if (commandName === '서버역할') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
+
+        try {
+            const roles = await guild.roles.fetch();
+            let roleText = `📋 **[${guild.name} 서버 역할 목록 (${roles.size}개)]**\n\n`;
+
+            roles.forEach(role => {
+                if (role.id !== guild.id) {
+                    roleText += `• **이름:** ${role.name} | **ID:** \`${role.id}\`\n`;
+                }
+            });
+
+            if (roleText.length > 2000) {
+                roleText = roleText.substring(0, 1950) + '\n...(내용이 너무 길어 생략됨)';
+            }
+
+            return interaction.reply({ content: roleText, ephemeral: true });
+        } catch (err) {
+            return interaction.reply({ content: '⚠️ 역할 목록을 불러오는 중 오류가 발생했습니다.', ephemeral: true });
+        }
+    }
+
+    // 6. /역할지급
+    if (commandName === '역할지급') {
+        const query = interaction.options.getString('역할').trim();
+        try {
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (!member) return interaction.reply({ content: '❌ 멤버 정보를 찾을 수 없습니다.', ephemeral: true });
+
+            let targetRole = guild.roles.cache.get(query);
+            if (!targetRole) {
+                targetRole = guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
+            }
+
+            if (!targetRole) {
+                return interaction.reply({ content: `❌ \`${query}\`에 해당하는 역할을 이 서버에서 찾을 수 없습니다.`, ephemeral: true });
+            }
+
+            if (member.roles.cache.has(targetRole.id)) {
+                return interaction.reply({ content: `⚠️ 이미 **${targetRole.name}** 역할을 가지고 있습니다.`, ephemeral: true });
+            }
+
+            await member.roles.add(targetRole);
+            return interaction.reply({ content: `✅ 성공적으로 **${targetRole.name}** 역할을 지급받았습니다!`, ephemeral: true });
+        } catch (err) {
+            console.error('역할 지급 오류:', err);
+            return interaction.reply({ content: '⚠️ 역할을 지급하는 중 오류가 발생했습니다. (봇의 역할 권한을 확인해 주세요)', ephemeral: true });
+        }
+    }
 
     // 7. /서버정보
     if (commandName === '서버정보') {
@@ -533,28 +716,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 8. /서버인증
-    if (commandName === '서버인증') {
-        if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
-
-        if (!settings[guildId]) settings[guildId] = {};
-        settings[guildId].activated = true;
-        saveSettings(settings);
-
-        const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
-
-        const dmSuccess = await user.send({
-            content: `🚨 **[${guild.name}] 서버 인증 시스템이 활성화되었습니다.**\n인증 패널 링크 버튼입니다:`,
-            components: [row]
-        }).catch(() => null);
-
-        if (!dmSuccess) return interaction.reply({ content: '❌ DM 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어주세요!', ephemeral: true });
-
-        return interaction.reply({ content: '✅ DM으로 인증 패널 메시지를 전송했으며 서버가 활성화되었습니다!', ephemeral: true });
-    }
-
-    // 9. /도움말-a (나만 보이게 ephemeral: true 적용)
+    // 8. /도움말-a
     if (commandName === '도움말-a') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
         return interaction.reply({
@@ -564,7 +726,8 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 나만 보게 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/인증정보삭제\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
-                     `• \`/서버인증\` - 서버 인증 시스템을 활성화하고 DM으로 링크를 받습니다. (소유자 전용)\n` +
+                     `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
+                     `• \`/서버설정\` - 서버의 인증 역할 및 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
                      `• \`/역할제거\` - 지정된 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
@@ -575,14 +738,15 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 10. /도움말
+    // 9. /도움말
     if (commandName === '도움말') {
         return interaction.reply({
             content: `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
                      `📋 **[사용 가능한 슬래시 명령어]**\n` +
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
-                     `• \`/서버인증\` - 서버 인증 시스템을 활성화하고 DM으로 링크를 받습니다. (소유자 전용)\n` +
+                     `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
+                     `• \`/서버설정\` - 서버 인증 역할 및 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
                      `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/도움말\` - 명령어 목록을 확인합니다.`,
@@ -590,12 +754,9 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    if (!isServerActivated && !isBotOwner) {
-        return interaction.reply({ content: '⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 `/서버인증`을 실행해 주세요.', ephemeral: true });
-    }
-
-    // 11. /인증 (버튼 전송)
+    // 10. /인증 (버튼 전송)
     if (commandName === '인증') {
+        const isServerOwner = guild.ownerId === userId;
         if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
 
         try {
@@ -612,7 +773,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 12. /역할제거
+    // 11. /역할제거
     if (commandName === '역할제거') {
         try {
             const member = await guild.members.fetch(userId).catch(() => null);
