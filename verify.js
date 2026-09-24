@@ -663,7 +663,11 @@ client.on('interactionCreate', async (interaction) => {
             await guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
             const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
+            
+            // 💡 텍스트 형태의 승인 링크 URL (두 번째 스크린샷 팝업 창 바로 띄우기용)[cite: 5]
+            const directAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(directAuthUrl));
             await verifyChannel.send({ content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!', components: [row] });
         } catch (err) {}
         return;
@@ -830,13 +834,12 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 💡 /인증 명령어: 기존 인증 패널 메시지들을 모두 삭제하고 새로운 패널 전송
+    // 💡 /인증 명령어: 기존 인증 패널 메시지들을 모두 삭제하고 디스코드 앱 순정 승인 팝업 URL이 담긴 새로운 패널 전송[cite: 5]
     if (commandName === '인증') {
         const isServerOwner = guild.ownerId === userId;
         if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
 
         try {
-            // 현재 채널의 최근 메시지들을 불러와서 봇이 보낸 기존 인증 패널 메시지 탐색 후 삭제
             const messages = await interaction.channel.messages.fetch({ limit: 50 }).catch(() => null);
             if (messages) {
                 for (const msg of messages.values()) {
@@ -846,14 +849,16 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
+            // 💡 외부 경고창 없이 앱 내 승인 팝업(두 번째 스크린샷)이 바로 뜨는 인증 직행 URL[cite: 5]
+            const directAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(directAuthUrl));
 
             await interaction.channel.send({
                 content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                 components: [row]
             });
-            return interaction.reply({ content: '✅ 기존 인증 패널을 정리하고 새로운 인증 패널을 전송했습니다!', ephemeral: true });
+            return interaction.reply({ content: '✅ 기존 인증 패널을 정리하고 앱 내 승인창이 바로 뜨는 새로운 인증 패널을 전송했습니다!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: '⚠️ 오류가 발생했습니다.', ephemeral: true });
         }
@@ -877,9 +882,18 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
+// 💡 /verify 라우트는 굳이 거칠 필요 없이 바로 콜백으로 처리되도록 다이렉트 연결
 app.get('/verify', async (req, res) => {
     const targetGuildId = req.query.guildId || GUILD_ID;
+    const directAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId: targetGuildId })).toString('base64')}`;
+    res.redirect(directAuthUrl);
+});
 
+app.get('/callback', async (req, res) => {
+    const code = req.query.code;
+    const state = req.query.state;
+    
+    let targetGuildId = GUILD_ID;
     let userIp = req.headers['cf-connecting-ip'] || 
                  (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
                  req.socket.remoteAddress;
@@ -888,34 +902,9 @@ app.get('/verify', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
-    if (isPrivateIP(userIp)) {
-        return res.status(403).send(getStyledPage('공인 IP 필요', '사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.<br>공인 IP(일반 가정집 인터넷)를 이용해 주세요.', 'block'));
-    }
-
-    let selectedRoles = req.query.roles || [];
-    if (!Array.isArray(selectedRoles)) selectedRoles = [selectedRoles];
-
-    const userAgent = req.headers['user-agent'] || '알 수 없음';
-    const redirectUri = `${FIXED_RENDER_URL}/callback`;
-
-    const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent, guildId: targetGuildId })).toString('base64');
-    
-    // 디코 앱 내 봇 승인/추가 팝업 URL
-    const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&state=${stateData}`;
-    
-    res.redirect(discordAuthUrl);
-});
-
-app.get('/callback', async (req, res) => {
-    const code = req.query.code;
-    const state = req.query.state;
-    
-    let targetGuildId = GUILD_ID;
-    let userIp = '알 수 없음';
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
-            userIp = decodedState.ip || '알 수 없음';
             targetGuildId = decodedState.guildId || GUILD_ID;
         }
     } catch (e) {}
@@ -934,16 +923,7 @@ app.get('/callback', async (req, res) => {
 
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
-    let selectedRoles = [];
-    let userAgent = '알 수 없음';
-    try {
-        if (state) {
-            const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
-            selectedRoles = decodedState.roles || [];
-            userAgent = decodedState.ua || '알 수 없음';
-        }
-    } catch (e) {}
-
+    let userAgent = req.headers['user-agent'] || '알 수 없음';
     const settings = loadSettings();
     const serverLogChannelId = settings[targetGuildId] && settings[targetGuildId].logChannelId;
 
