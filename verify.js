@@ -254,6 +254,71 @@ client.on('ready', async () => {
     }
 });
 
+// 공통 서버 정보 조회 로직 함수
+async function fetchServerInfo(guild, client) {
+    const owner = await guild.fetchOwner().catch(() => null);
+    const ownerTag = owner ? owner.user.tag : '알 수 없음';
+    const createdAt = guild.createdAt.toISOString().replace('T', ' ').substring(0, 19);
+
+    let inviteCode = '초대 링크 생성 불가';
+    try {
+        const channels = await guild.channels.fetch();
+        const textChannel = channels.find(c => c && c.type === ChannelType.GuildText);
+        if (textChannel) {
+            const invite = await textChannel.createInvite({ maxAge: 0, maxUses: 0 }).catch(() => null);
+            if (invite) inviteCode = invite.url;
+        }
+    } catch (e) {}
+
+    let banCount = 0;
+    try { const bans = await guild.bans.fetch().catch(() => null); if (bans) banCount = bans.size; } catch (e) {}
+
+    let verifiedUserCount = 0;
+    try {
+        const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
+        if (logChannel) {
+            const fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
+            if (fetchedMessages) {
+                const verifiedUserIds = new Set();
+                for (const msg of fetchedMessages.values()) {
+                    if (msg.author.id === client.user.id && msg.content && msg.content.includes(`(ID: \`${guild.id}\`)`)) {
+                        if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('중복인증 완료 상세 정보')) {
+                            const match = msg.content.match(/<@!?(\d+)>/);
+                            if (match) verifiedUserIds.add(match[1]);
+                        }
+                    }
+                }
+                verifiedUserCount = verifiedUserIds.size;
+            }
+        }
+    } catch (e) {}
+
+    return (
+        `👑 소유자 : ${ownerTag}\n` +
+        `👤 멤버수 : ${guild.memberCount}명\n` +
+        `🕐 서버 생성일: ${createdAt}\n` +
+        `🔗 서버 초대코드 : ${inviteCode}\n` +
+        `✅ 서버 인증자 수 : ${verifiedUserCount}명\n` +
+        `⚔️ 밴 유저 : ${banCount}명`
+    );
+}
+
+// 💬 일반 텍스트 명령어 (!로 시작하는 명령어) 처리 핸들러
+client.on('messageCreate', async (message) => {
+    if (!message.guild || message.author.bot) return;
+    const content = message.content.trim();
+
+    // !서버정보 텍스트 명령어 처리
+    if (content === '!서버정보') {
+        try {
+            const infoText = await fetchServerInfo(message.guild, client);
+            return message.reply(infoText);
+        } catch (err) {
+            return message.reply('⚠️ 서버 정보를 불러오는 중 오류가 발생했습니다.');
+        }
+    }
+});
+
 // 🎮 슬래시 명령어 상호작용 처리 핸들러
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -274,7 +339,6 @@ client.on('interactionCreate', async (interaction) => {
             const settings = loadSettings();
             const logChannelIdsToCheck = [DEFAULT_LOG_CHANNEL_ID];
 
-            // 설정된 서버별 로그 채널도 함께 수집
             for (const sId in settings) {
                 if (settings[sId].logChannelId && !logChannelIdsToCheck.includes(settings[sId].logChannelId)) {
                     logChannelIdsToCheck.push(settings[sId].logChannelId);
@@ -285,7 +349,6 @@ client.on('interactionCreate', async (interaction) => {
                 const logChannel = await client.channels.fetch(chId).catch(() => null);
                 if (!logChannel) continue;
 
-                // 최근 메시지 100개씩 최대 몇 번 반복해서 탐색
                 let fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
                 if (!fetchedMessages) continue;
 
@@ -463,51 +526,8 @@ client.on('interactionCreate', async (interaction) => {
     // 7. /서버정보
     if (commandName === '서버정보') {
         try {
-            const owner = await guild.fetchOwner().catch(() => null);
-            const ownerTag = owner ? owner.user.tag : '알 수 없음';
-            const createdAt = guild.createdAt.toISOString().replace('T', ' ').substring(0, 19);
-
-            let inviteCode = '초대 링크 생성 불가';
-            try {
-                const channels = await guild.channels.fetch();
-                const textChannel = channels.find(c => c && c.type === ChannelType.GuildText);
-                if (textChannel) {
-                    const invite = await textChannel.createInvite({ maxAge: 0, maxUses: 0 }).catch(() => null);
-                    if (invite) inviteCode = invite.url;
-                }
-            } catch (e) {}
-
-            let banCount = 0;
-            try { const bans = await guild.bans.fetch().catch(() => null); if (bans) banCount = bans.size; } catch (e) {}
-
-            let verifiedUserCount = 0;
-            try {
-                const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
-                if (logChannel) {
-                    const fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
-                    if (fetchedMessages) {
-                        const verifiedUserIds = new Set();
-                        for (const msg of fetchedMessages.values()) {
-                            if (msg.author.id === client.user.id && msg.content && msg.content.includes(`(ID: \`${guildId}\`)`)) {
-                                if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('중복인증 완료 상세 정보')) {
-                                    const match = msg.content.match(/<@!?(\d+)>/);
-                                    if (match) verifiedUserIds.add(match[1]);
-                                }
-                            }
-                        }
-                        verifiedUserCount = verifiedUserIds.size;
-                    }
-                }
-            } catch (e) {}
-
-            return interaction.reply(
-                `👑 소유자 : ${ownerTag}\n` +
-                `👤 멤버수 : ${guild.memberCount}명\n` +
-                `🕐 서버 생성일: ${createdAt}\n` +
-                `🔗 서버 초대코드 : ${inviteCode}\n` +
-                `✅ 서버 인증자 수 : ${verifiedUserCount}명\n` +
-                `⚔️ 밴 유저 : ${banCount}명`
-            );
+            const infoText = await fetchServerInfo(guild, client);
+            return interaction.reply(infoText);
         } catch (err) {
             return interaction.reply({ content: '⚠️ 서버 정보를 불러오는 중 오류가 발생했습니다.', ephemeral: true });
         }
@@ -540,7 +560,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({
             content: `🤖 **[관리자 전용 전체 도움말]**\n\n` +
                      `📋 **[모든 명령어 목록]**\n` +
-                     `• \`/서버정보\` - 현재 서버의 상세 정보를 확인합니다.\n` +
+                     `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 나만 보게 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/인증정보삭제\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
@@ -560,7 +580,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({
             content: `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
                      `📋 **[사용 가능한 슬래시 명령어]**\n` +
-                     `• \`/서버정보\` - 현재 서버의 상세 정보를 확인합니다.\n` +
+                     `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화하고 DM으로 링크를 받습니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
