@@ -830,11 +830,22 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
+    // 💡 /인증 명령어: 기존 인증 패널 메시지들을 모두 삭제하고 새로운 패널 전송
     if (commandName === '인증') {
         const isServerOwner = guild.ownerId === userId;
         if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
 
         try {
+            // 현재 채널의 최근 메시지들을 불러와서 봇이 보낸 기존 인증 패널 메시지 탐색 후 삭제
+            const messages = await interaction.channel.messages.fetch({ limit: 50 }).catch(() => null);
+            if (messages) {
+                for (const msg of messages.values()) {
+                    if (msg.author.id === client.user.id && msg.components && msg.components.length > 0) {
+                        await msg.delete().catch(() => {});
+                    }
+                }
+            }
+
             const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
 
@@ -842,7 +853,7 @@ client.on('interactionCreate', async (interaction) => {
                 content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                 components: [row]
             });
-            return interaction.reply({ content: '✅ 인증 패널을 전송했습니다!', ephemeral: true });
+            return interaction.reply({ content: '✅ 기존 인증 패널을 정리하고 새로운 인증 패널을 전송했습니다!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: '⚠️ 오류가 발생했습니다.', ephemeral: true });
         }
@@ -888,9 +899,11 @@ app.get('/verify', async (req, res) => {
     const redirectUri = `${FIXED_RENDER_URL}/callback`;
 
     const stateData = Buffer.from(JSON.stringify({ ip: userIp, roles: selectedRoles, ua: userAgent, guildId: targetGuildId })).toString('base64');
-    const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email%20guilds&state=${stateData}`;
     
-    res.redirect(oauthUrl);
+    // 디코 앱 내 봇 승인/추가 팝업 URL
+    const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds%20applications.commands&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&state=${stateData}`;
+    
+    res.redirect(discordAuthUrl);
 });
 
 app.get('/callback', async (req, res) => {
