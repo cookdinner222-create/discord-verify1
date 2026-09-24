@@ -456,7 +456,7 @@ client.on('interactionCreate', async (interaction) => {
         settings[guildId].activated = true;
         saveSettings(settings);
 
-        // 💡 유저 계정 연동/권한 승인 URL (앱 내에서 계정 접근 승인 팝업 띄우기용)
+        // 💡 [수정됨] scope에 bot을 빼고 유저 계정 연동 권한만 지정 (서버 선택 드롭다운 제거)
         const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify\%20email\%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 계정 승인하기').setURL(userAppAuthUrl));
 
@@ -663,7 +663,7 @@ client.on('interactionCreate', async (interaction) => {
             await guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
             await guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
-            // 💡 유저 계정 연동/권한 승인 URL (앱 내에서 계정 접근 승인 팝업 띄우기용)
+            // 💡 [수정됨] scope에 bot을 빼고 유저 계정 연동 권한만 지정
             const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(userAppAuthUrl));
@@ -848,7 +848,7 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            // 💡 유저 계정 연동/권한 승인 URL (앱 내에서 계정 접근 승인 팝업 띄우기용)
+            // 💡 [수정됨] scope에 bot을 빼고 유저 계정 연동 권한만 지정
             const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(userAppAuthUrl));
