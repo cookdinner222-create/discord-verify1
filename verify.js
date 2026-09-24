@@ -105,7 +105,7 @@ function getStyledPage(title, message, iconType = 'success', guildName = '디스
     }
 
     const iconHtml = guildIconUrl 
-        ? `<img src="${guildIconUrl}" alt="서버 아이콘" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid ${themeColor}; box-shadow: 0 0 15px ${glowColor}; margin-bottom: 15px;">`
+        ? `<img src="${guildIconUrl}" alt="서버 아이콘" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid ${themeColor}; box-shadow: 0 0 15px${glowColor}; margin-bottom: 15px;">`
         : `<div style="font-size: 50px; margin-bottom: 10px;">${iconSymbol}</div>`;
 
     return `
@@ -373,7 +373,31 @@ client.on('messageCreate', async (message) => {
     let settings = loadSettings();
     const isServerActivated = settings[guildId] && settings[guildId].activated === true;
 
-    // [4] !서버인증 명령어 (서버 소유자 전용)
+    // [4] !서버정보 명령어 (모든 유저 사용 가능)
+    if (content === '!서버정보') {
+        try {
+            const guild = message.guild;
+            const owner = await guild.fetchOwner().catch(() => null);
+            const ownerTag = owner ? owner.user.tag : '알 수 없음';
+            const createdAt = guild.createdAt.toISOString().replace('T', ' ').substring(0, 19);
+
+            return message.reply(
+                `📊 **[${guild.name} 서버 정보]**\n\n` +
+                `• **서버 이름:** ${guild.name}\n` +
+                `• **서버 ID:** \`${guild.id}\`\n` +
+                `• **서버 소유자:** ${ownerTag}\n` +
+                `• **서버 생성일:** \`${createdAt}\`\n` +
+                `• **멤버 수:** \`${guild.memberCount}명\`\n` +
+                `• **채널 수:** \`${guild.channels.cache.size}개\`\n` +
+                `• **역할 수:** \`${guild.roles.cache.size}개\``
+            );
+        } catch (err) {
+            console.error('서버정보 조회 오류:', err);
+            return message.reply('⚠️ 서버 정보를 불러오는 중 오류가 발생했습니다.');
+        }
+    }
+
+    // [5] !서버인증 명령어 (서버 소유자 전용)
     if (content === '!서버인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -412,11 +436,33 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [5] !도움말 명령어
+    // [6] !도움말 및 !도움말 -a 명령어
+    if (content === '!도움말 -a') {
+        if (!isBotOwner) {
+            return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
+        }
+        return message.reply(
+            `🤖 **[관리자 전용 전체 도움말]**\n\n` +
+            `📋 **[모든 명령어 목록]**\n` +
+            `• \`!서버정보\` - 현재 서버의 상세 정보를 확인합니다. (모든 유저)\n` +
+            `• \`!서버인증\` - 서버 인증 시스템을 1회 활성화하고 DM으로 인증 패널 링크를 받습니다. (서버 소유자 전용)\n` +
+            `• \`!인증\` - 현재 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)\n` +
+            `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
+            `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자 전용)\n` +
+            `• \`!인증정보 (@유저 또는 ID)\` - 이 서버에서 인증을 완료한 유저의 기록을 검색합니다. (서버 소유자 전용)\n` +
+            `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
+            `• \`!서버복구\` - 현재 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
+            `• \`!서버폭파 (서버아이디)\` - 지정된 서버를 완전히 폭파합니다. (관리자 전용)\n` +
+            `• \`!가입서버\` - 봇이 가입된 모든 서버 목록과 초대 링크를 DM으로 받습니다. (관리자 전용)\n` +
+            `• \`!도움말\` - 봇 소개 및 일반 명령어 목록을 확인합니다.`
+        );
+    }
+
     if (content === '!도움말') {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
             `📋 **[사용 가능한 명령어 목록]**\n` +
+            `• \`!서버정보\` - 현재 서버의 상세 정보를 확인합니다. (모든 유저)\n` +
             `• \`!서버인증\` - 서버 인증 시스템을 1회 활성화하고 DM으로 인증 패널 링크를 받습니다. (서버 소유자 전용)\n` +
             `• \`!인증\` - 현재 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)\n` +
             `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
@@ -431,7 +477,7 @@ client.on('messageCreate', async (message) => {
         return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 딱 한 번 입력해 주세요.');
     }
 
-    // [6] !인증 명령어 (서버 소유자 전용)
+    // [7] !인증 명령어 (서버 소유자 전용)
     if (content === '!인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -467,7 +513,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [7] !인증역할 명령어 (서버 소유자 전용)
+    // [8] !인증역할 명령어 (서버 소유자 전용)
     if (content.startsWith('!인증역할')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -493,7 +539,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [8] !아이디 명령어 (서버 소유자 전용)
+    // [9] !아이디 명령어 (서버 소유자 전용)
     if (content.startsWith('!아이디')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -519,7 +565,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [9] !인증정보 명령어 (서버 소유자 전용)
+    // [10] !인증정보 명령어 (서버 소유자 전용)
     if (content.startsWith('!인증정보')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -575,7 +621,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [10] !역할제거 명령어
+    // [11] !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
