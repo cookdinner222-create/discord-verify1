@@ -238,14 +238,13 @@ client.on('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
-        console.log('[슬래시 명령어] 명령어 등록 중...');
+        console.log('[슬래시 명령어] 강제 등록 시작...');
         if (GUILD_ID) {
             await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-            console.log('[슬래시 명령어] 테스트 서버에 등록 완료!');
-        } else {
-            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-            console.log('[슬래시 명령어] 전역 등록 완료!');
+            console.log(`[슬래시 명령어] 지정된 서버(ID: ${GUILD_ID})에 즉시 등록 완료!`);
         }
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log('[슬래시 명령어] 전역 등록 완료!');
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
     }
@@ -269,7 +268,7 @@ client.on('interactionCreate', async (interaction) => {
             let roleText = `📋 **[${guild.name} 서버 역할 목록 (${roles.size}개)]**\n\n`;
 
             roles.forEach(role => {
-                if (role.id !== guild.id) { // @everyone 제외
+                if (role.id !== guild.id) {
                     roleText += `• **이름:** ${role.name} | **ID:** \`${role.id}\`\n`;
                 }
             });
@@ -293,7 +292,6 @@ client.on('interactionCreate', async (interaction) => {
             const member = await guild.members.fetch(userId).catch(() => null);
             if (!member) return interaction.reply({ content: '❌ 멤버 정보를 찾을 수 없습니다.', ephemeral: true });
 
-            // 이름 또는 ID로 역할 찾기
             let targetRole = guild.roles.cache.get(query);
             if (!targetRole) {
                 targetRole = guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
@@ -346,7 +344,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 4. /서버폭파
+    // 4. /서버폭파 (나만 보이게 ephemeral: true 적용)
     if (commandName === '서버폭파') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
 
@@ -483,7 +481,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: '✅ DM으로 인증 패널 메시지를 전송했으며 서버가 활성화되었습니다!', ephemeral: true });
     }
 
-    // 8. /도움말-a
+    // 8. /도움말-a (나만 보이게 ephemeral: true 적용)
     if (commandName === '도움말-a') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
         return interaction.reply({
