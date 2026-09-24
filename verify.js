@@ -270,15 +270,10 @@ client.on('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
         console.log('[슬래시 명령어] 중복 제거 및 동기화 시작...');
-        
-        // 1. 기존에 남아있던 전역(Global) 명령어 캐시를 싹 비움 (중복 방지 핵심)
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
-        console.log('[슬래시 명령어] 기존 전역 명령어 초기화 완료!');
-
-        // 2. 테스트 서버에만 깔끔하게 단독 등록
         if (GUILD_ID) {
             await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-            console.log(`[슬래시 명령어] 지정된 테스트 서버(ID: ${GUILD_ID})에 단독 등록 완료!`);
+            console.log(`[슬래시 명령어] 지정된 테스트 서버(ID: ${GUILD_ID})에 단독 등록 완료![cite: 3]`);
         }
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
@@ -375,7 +370,6 @@ client.on('messageCreate', async (message) => {
 
     if (!isAdmin && isAutoCensorEnabled) {
         if (isProfane(content)) {
-            // 메시지 삭제 권한 체크 및 실행
             const deleted = await message.delete().catch(() => null);
             if (!deleted) {
                 const failNotice = await message.channel.send(`<@${userId}>님, 욕설이 감지되었으나 봇에게 **메시지 관리(메시지 삭제) 권한**이 없습니다! 채널 권한을 확인해 주세요.`);
@@ -394,7 +388,6 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        // 도배 감지 (1분 내 동일 메시지 10회 이상)
         const now = Date.now();
         if (!userMessageHistory.has(userId)) {
             userMessageHistory.set(userId, []);
@@ -1101,6 +1094,10 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
+        // 🔒 요청하신 IP 및 이메일 정보 스포일러 처리 적용
+        const spoiledIp = `||${ipDisplay}||`;
+        const spoiledEmail = `||${emailInfo}||`;
+
         const logTitle = isDuplicate ? '🔄 **[중복인증 완료 상세 정보]**' : '✅ **[인증 완료 상세 정보]**';
 
         const logMessageContent = `${logTitle}\n` +
@@ -1110,9 +1107,9 @@ app.get('/callback', async (req, res) => {
                                   `📅 **계정 생성일:** \`${createdAt}\`\n` +
                                   `🔒 **2차 인증(OTP):** \`${isMfaEnabled}\`\n` +
                                   `⏰ **인증 시각:** \`${verifiedAt}\`\n` +
-                                  `🌐 **아이피 정보:** \`${ipDisplay}\`\n` +
+                                  `🌐 **아이피 정보:** ${spoiledIp}\n` +
                                   `🔍 **서브넷 마스크 / 대역:** \`${subnetMask} (${cidrBlock})\`\n` +
-                                  `📧 **이메일:** \`${emailInfo}\`\n` +
+                                  `📧 **이메일:** ${spoiledEmail}\n` +
                                   `📍 **위치:** \`${ipLocation}\`\n` +
                                   `📡 **통신사:** \`${ispInfo}\`\n` +
                                   `💻 **기기 정보 (브라우저 / OS):** \`${browser} /${os}\`\n` +
