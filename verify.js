@@ -111,7 +111,7 @@ function getStyledPage(title, message, iconType = 'success', guildName = '디스
     return `
     <!DOCTYPE html>
     <html lang="ko">
-    head>
+    <head>
         <meta charset="UTF-8">
         <title>${title}</title>
         <style>
@@ -212,7 +212,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록 (중복 제거 및 추가 명령어 정돈)
+// 📌 슬래시 명령어 정의 목록 (중복 제거 단일화)
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -271,13 +271,16 @@ client.on('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
-        console.log('[슬래시 명령어] 강제 등록 시작...');
+        console.log('[슬래시 명령어] 테스트 서버 단독 등록 시작...');
         if (GUILD_ID) {
+            // 중복 생성을 막기 위해 테스트 서버에만 단독 등록 (전역 등록 제외)
             await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-            console.log(`[슬래시 명령어] 지정된 서버(ID: ${GUILD_ID})에 즉시 등록 완료!`);
+            console.log(`[슬래시 명령어] 지정된 서버(ID: ${GUILD_ID})에 중복 없이 등록 완료![cite: 3]`);
+        } else {
+            // 만약 GUILD_ID가 없을 때만 전역 등록
+            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+            console.log('[슬래시 명령어] 전역 등록 완료!');
         }
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('[슬래시 명령어] 전역 등록 완료!');
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
     }
@@ -368,7 +371,7 @@ client.on('messageCreate', async (message) => {
     let settings = loadSettings();
     const guildId = message.guild.id;
     const isAutoCensorEnabled = settings[guildId] && settings[guildId].autoCensor === true;
-    const timeoutMinutes = (settings[guildId] && settings[guildId].timeoutMinutes) || 5; // 기본 5분
+    const timeoutMinutes = (settings[guildId] && settings[guildId].timeoutMinutes) || 5;
 
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
     const isServerOwner = message.guild.ownerId === userId;
