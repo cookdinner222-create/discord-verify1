@@ -212,7 +212,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록
+// 📌 슬래시 명령어 정의 목록 (누락 없이 모두 등록)
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -310,22 +310,14 @@ async function fetchServerInfo(guild, client) {
 
 // 🛡️ [전 세계 모든 언어 + 특수문자/변형 욕설 완벽 차단용 정규식 및 필터]
 const userMessageHistory = new Map();
-
-// 한국어 (초성, 변형, 숫자/특수문자 섞기 포함), 영어, 일본어, 중국어, 스페인어, 프랑스어 등 글로벌 욕설 패턴
 const GLOBAL_BANNED_PATTERNS = [
-    // 한국어 변형/초성/은어 (시1발, s1bal, ㅅㅂ, ㅈㄹ, ㅄ, ㅆㅂ, ㅗ, 개새끼, 병신, 지랄, 좆, 보지, 자지, 창녀, 걸레, 씹, 썅, 엠생 등)
     /시[1!l|I]?발/i, /씨[1!l|I]?발/i, /ㅅ[1!l|I]?ㅂ/i, /ㅆ[1!l|I]?ㅂ/i, /ㅈ[1!l|I]?ㄹ/i, /ㅂ[1!l|I]?신/i, /개새/i, /병신/i, /지랄/i, /좆/i, /씹/i, /썅/i, /꺼져/i, /닥쳐/i, /새끼/i, / tlqkf/i, /tlqkf /i, /^tlqkf$/i, /sh1t/i, /f[u\*@-_]ck/i, /b[i\*@-_]tch/i, /asshole/i, /idiot/i, /bastard/i, /c[u\*@-_]nt/i,
-    // 일본어 (馬鹿, 糞, 死ね, クズ, チンコ, マンコ 등)
     /馬鹿/i, /バカ/i, /ばか/i, /死ね/i, /しね/i, /クズ/i, /くず/i, /糞/i, /チンコ/i, /マンコ/i,
-    // 중국어 (操你妈, 傻逼, 脑残, 滚 둥)
     /操你妈/i, /操你媽/i, /傻逼/i, /傻B/i, /脑残/i, /去死/i,
-    // 스페인어/프랑스어/독일어 주요 비속어 (puta, mierda, connard, scheisse 등)
     /puta/i, /mierda/i, /pendejo/i, /connard/i, /salope/i, /scheisse/i, /arschloch/i
 ];
 
-// 특수문자나 공백을 넣어서 우회하는 것(예: 시 ! 발, f u c k)을 방지하기 위해 텍스트 정규화 함수
 function isProfane(text) {
-    // 공백, 특수문자, 숫자 유사 문자 제거
     const cleaned = text.toLowerCase()
         .replace(/[\s\-_.,!?~`'"+^°=<>()[\]{}|\\/]/g, '')
         .replace(/1/g, 'ㅣ')
@@ -334,7 +326,6 @@ function isProfane(text) {
         .replace(/0/g, 'o')
         .replace(/5/g, 's');
 
-    // 일반 정규식 패턴 검사
     for (const pattern of GLOBAL_BANNED_PATTERNS) {
         if (pattern.test(text) || pattern.test(cleaned)) {
             return true;
@@ -354,7 +345,7 @@ client.on('messageCreate', async (message) => {
     const isServerOwner = message.guild.ownerId === userId;
     const isAdmin = isBotOwner || isServerOwner || (member && member.permissions.has(PermissionsBitField.Flags.Administrator));
 
-    // 1. 🤬 글로벌 욕설 자동 감지 및 타임아웃
+    // 1. 욕설 자동 감지 및 타임아웃
     if (!isAdmin) {
         if (isProfane(content)) {
             try {
@@ -367,7 +358,7 @@ client.on('messageCreate', async (message) => {
             return;
         }
 
-        // 2. 🔁 도배 감지 (1분 내 동일 메시지 10회 이상)
+        // 2. 도배 감지 (1분 내 동일 메시지 10회 이상)
         const now = Date.now();
         if (!userMessageHistory.has(userId)) {
             userMessageHistory.set(userId, []);
@@ -723,7 +714,7 @@ client.on('interactionCreate', async (interaction) => {
             content: `🤖 **[관리자 전용 전체 도움말]**\n\n` +
                      `📋 **[모든 명령어 목록]**\n` +
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
-                     `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 나만 보게 확인합니다. (관리자 전용)\n` +
+                     `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/인증정보삭제\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
@@ -738,13 +729,13 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 9. /도움말
+    // 9. /도움말 (신규 추가된 명령어들까지 모두 포함되도록 수정 완료)
     if (commandName === '도움말') {
         return interaction.reply({
             content: `🤖 **더 안전한 서버를 만드는 인증봇입니다.**\n\n` +
                      `📋 **[사용 가능한 슬래시 명령어]**\n` +
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
-                     `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
+                     `• \`/역할지급 (역할이름/아이디)\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
                      `• \`/서버설정\` - 서버 인증 역할 및 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
