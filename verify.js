@@ -438,12 +438,14 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
+    // 💡 /말하기 명령어 (응답 지연 에러 방지 처리 완료)
     if (commandName === '말하기') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
         const text = interaction.options.getString('내용');
+        await interaction.reply({ content: '✅ 메시지를 출력합니다.', ephemeral: true });
         await interaction.channel.send(text).catch(() => {});
-        return interaction.reply({ content: '✅ 메시지가 성공적으로 출력되었습니다!', ephemeral: true });
+        return;
     }
 
     if (commandName === '서버인증') {
@@ -456,8 +458,7 @@ client.on('interactionCreate', async (interaction) => {
         settings[guildId].activated = true;
         saveSettings(settings);
 
-        // 💡 [수정됨] scope에 bot과 권한(permissions=8)을 다시 포함시켜 서버 추가 + 관리자 권한 체크 화면 유도
-        const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot\%20identify\%20email\%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+        const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&scope=bot\%20identify\%20email\%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 서버/계정 승인하기').setURL(botAndUserAuthUrl));
 
         const dmSuccess = await user.send({
@@ -663,7 +664,7 @@ client.on('interactionCreate', async (interaction) => {
             await guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
             await guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
-            const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+            const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&scope=bot%20identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(botAndUserAuthUrl));
             await verifyChannel.send({ content: '서버를 이용하려면 아래 버튼을 눌러 인증을 진행해 주세요!', components: [row] });
@@ -847,7 +848,7 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
+            const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&scope=bot%20identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(botAndUserAuthUrl));
 
@@ -881,7 +882,7 @@ client.on('interactionCreate', async (interaction) => {
 
 app.get('/verify', async (req, res) => {
     const targetGuildId = req.query.guildId || GUILD_ID;
-    const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&integration_type=0&scope=bot%20identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId: targetGuildId })).toString('base64')}`;
+    const botAndUserAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&scope=bot%20identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId: targetGuildId })).toString('base64')}`;
     res.redirect(botAndUserAuthUrl);
 });
 
