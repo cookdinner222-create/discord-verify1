@@ -451,11 +451,11 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말 명령어 (즉시 메시지 전송 방식)
+    // 💡 /말 명령어 (권한 막혀있으면 나에게만 보이는 텍스트로 처리)
     if (commandName === '말') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
-        const text = interaction.options.getString('내용');
+        const text = optionsText = interaction.options.getString('내용');
         
         try {
             const targetChannel = await client.channels.fetch(interaction.channelId);
@@ -463,15 +463,15 @@ client.on('interactionCreate', async (interaction) => {
                 await targetChannel.send(text);
                 return interaction.reply({ content: '✅ 메시지가 성공적으로 출력되었습니다.', ephemeral: true });
             } else {
-                return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true });
+                return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널에 전송할 수 없습니다.\n\n**[출력하려던 내용]**\n${text}`, ephemeral: true });
             }
         } catch (err) {
             console.error('말하기 전송 오류:', err);
-            return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true });
+            return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널에 전송할 수 없습니다.\n\n**[출력하려던 내용]**\n${text}`, ephemeral: true });
         }
     }
 
-    // 💡 /고스트핑 명령어 (즉시 멘션 및 팜 전송 방식)
+    // 💡 /고스트핑 명령어 (권한 막혀있으면 나에게만 보이는 텍스트로 처리)
     if (commandName === '고스트핑') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
@@ -482,7 +482,7 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const targetChannel = await client.channels.fetch(interaction.channelId);
             if (!targetChannel) {
-                return interaction.reply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)', ephemeral: true });
+                return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널을 찾을 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
             }
 
             if (farmOption === 'off') {
@@ -490,7 +490,6 @@ client.on('interactionCreate', async (interaction) => {
                 await sentMsg.delete().catch(() => {});
                 return interaction.reply({ content: '✅ 고스트핑 전송 및 멘션 삭제 완료', ephemeral: true });
             } else {
-                // 팜 on 시: 1번, 5번, 10번, 50번 버튼 출력 (팜 선택용)
                 const uniqueId = Date.now();
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`ghost_1_${targetUser.id}_${uniqueId}`).setLabel('1번').setStyle(ButtonStyle.Primary),
@@ -524,7 +523,7 @@ client.on('interactionCreate', async (interaction) => {
                         await i.editReply({ content: `✅ 고스트핑 팜 (${count}회) 전송 및 멘션 삭제가 완료되었습니다!` });
                     } catch (err) {
                         console.error('고스트핑 팜 오류:', err);
-                        await i.editReply({ content: '⛔ 외부봇 막혔습니다', components: [] }).catch(() => {});
+                        await i.editReply({ content: `⛔ 외부봇 권한이 막혀 팜 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, components: [] }).catch(() => {});
                     }
                 });
 
@@ -532,7 +531,7 @@ client.on('interactionCreate', async (interaction) => {
             }
         } catch (err) {
             console.error('고스트핑 오류:', err);
-            return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true });
+            return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널에 전송할 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
         }
     }
 
