@@ -438,7 +438,7 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말하기 명령어 (Send Publicly 버튼 상호작용 방식 적용 - 외부 봇 호환)
+    // 💡 /말하기 명령어 (Send Publicly 버튼 상호작용 및 타임아웃 방지 적용 완료)
     if (commandName === '말하기') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
@@ -462,8 +462,10 @@ client.on('interactionCreate', async (interaction) => {
 
         collector.on('collect', async i => {
             try {
+                // 1. 버튼 클릭 즉시 응답하여 타임아웃 방지
                 await i.update({ content: 'sending...', components: [] });
 
+                // 2. 퍼블릭 채널에 메시지 전송
                 const targetChannel = await client.channels.fetch(interaction.channelId);
                 if (targetChannel) {
                     await targetChannel.send(text);
