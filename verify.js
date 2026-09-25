@@ -210,7 +210,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록 (/말 및 /고스트핑 포함)
+// 📌 슬래시 명령어 정의 목록
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -501,7 +501,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 처리
+    // 💡 /고스트핑 명령어 처리 (서버/외부봇 모두 호환)
     if (commandName === '고스트핑') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
@@ -516,13 +516,11 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             if (farmOption === 'off') {
-                // 즉시 응답으로 타임아웃 방지
                 await interaction.reply({ content: '✅ 고스트핑 전송 중...', ephemeral: true });
                 const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
                 await sentMsg.delete().catch(() => {});
                 return interaction.editReply({ content: '✅ 고스트핑 전송 및 멘션 삭제가 완료되었습니다.' });
             } else {
-                // 팜 on 시: 1번, 5번, 10번, 50번 버튼 출력
                 const uniqueId = Date.now();
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`ghost_1_${targetUser.id}_${uniqueId}`).setLabel('1번').setStyle(ButtonStyle.Primary),
@@ -543,10 +541,9 @@ client.on('interactionCreate', async (interaction) => {
                 collector.on('collect', async i => {
                     try {
                         const parts = i.customId.split('_');
-                        const count = parseInt(parts[1], 10); // 1, 5, 10, 50
+                        const count = parseInt(parts[1], 10);
 
-                        // 3초 타임아웃 방지를 위해 즉시 update 처리
-                        await i.update({ content: `🚀 팜 모드 작동 중... (${count회 반복 실행)`, components: [] });
+                        await i.update({ content: `🚀 팜 모드 작동 중... (${count}회 반복 실행)`, components: [] });
 
                         for (let c = 0; c < count; c++) {
                             const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
@@ -565,7 +562,12 @@ client.on('interactionCreate', async (interaction) => {
             }
         } catch (err) {
             console.error('고스트핑 오류:', err);
-            return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true });
+            // 유저 설치 봇 혹은 권한 문제로 interaction.reply가 막혔을 때 안전하게 처리
+            if (!interaction.replied && !interaction.deferred) {
+                return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true }).catch(() => {});
+            } else {
+                return interaction.editReply({ content: '⛔ 외부봇 막혔습니다' }).catch(() => {});
+            }
         }
     }
 
