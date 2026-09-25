@@ -46,9 +46,13 @@ function saveSettings(settings) {
     } catch (e) {}
 }
 
-// 🛡️ 사설 IP 판별 함수
+// 🛡️ 사설 IP 및 IPv6 주소 전면 차단 함수
 function isPrivateIP(ip) {
     if (!ip) return true;
+    
+    // IPv6 주소 전면 차단 (콜론이 포함되어 있으면 IPv6)
+    if (ip.includes(':')) return true;
+
     if (ip === '::1' || ip === '127.0.0.1' || ip.startsWith('::ffff:127.')) return true;
 
     const parts = ip.split('.').map(Number);
@@ -235,6 +239,10 @@ const commands = [
                     { name: '켜기 (on)', value: 'on' },
                     { name: '끄기 (off)', value: 'off' }
                 )),
+    new SlashCommandBuilder()
+        .setName('인증정보')
+        .setDescription('특정 유저의 인증 기록을 조회합니다. (관리자 전용)')
+        .addStringOption(option => option.setName('아이디').setDescription('조회할 유저의 디스코드 ID').setRequired(true)),
     new SlashCommandBuilder()
         .setName('인증정보삭제')
         .setDescription('특정 유저의 모든 인증 기록을 로그 채널에서 삭제합니다. (관리자 전용)')
@@ -455,7 +463,7 @@ client.on('interactionCreate', async (interaction) => {
     if (commandName === '말') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
-        const text = optionsText = interaction.options.getString('내용');
+        const text = interaction.options.getString('내용');
         
         try {
             const targetChannel = await client.channels.fetch(interaction.channelId);
@@ -532,6 +540,45 @@ client.on('interactionCreate', async (interaction) => {
         } catch (err) {
             console.error('고스트핑 오류:', err);
             return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널에 전송할 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
+        }
+    }
+
+    // 💡 /인증정보 명령어 (특정 유저의 인증 기록 조회)
+    if (commandName === '인증정보') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
+
+        const targetUserId = interaction.options.getString('아이디').trim();
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            let foundLogs = [];
+            const logChannel = await client.channels.fetch(DEFAULT_LOG_CHANNEL_ID).catch(() => null);
+            if (!logChannel) return interaction.editReply('⚠️ 기본 로그 채널을 찾을 수 없습니다.');
+
+            let fetchedMessages = await logChannel.messages.fetch({ limit: 100 }).catch(() => null);
+            if (!fetchedMessages) return interaction.editReply('⚠️ 로그 메시지를 불러올 수 없습니다.');
+
+            for (const msg of fetchedMessages.values()) {
+                if (msg.author.id === client.user.id && msg.content && msg.content.includes(targetUserId)) {
+                    if (msg.content.includes('인증 완료 상세 정보') || msg.content.includes('중복인증 완료 상세 정보') || msg.content.includes('모바일 데이터 차단')) {
+                        foundLogs.push(msg.content);
+                    }
+                }
+            }
+
+            if (foundLogs.length === 0) {
+                return interaction.editReply(`🔍 유저 ID \`${targetUserId}\`의 인증 기록을 찾을 수 없습니다.`);
+            }
+
+            let resultText = `📋 **[유저 ID: \`${targetUserId}\` 인증 기록 조회 결과 (${foundLogs.length}개)]**\n\n` + foundLogs[0];
+            if (resultText.length > 2000) {
+                resultText = resultText.substring(0, 1950) + '\n...(내용이 너무 길어 생략됨)';
+            }
+
+            return interaction.editReply(resultText);
+        } catch (err) {
+            console.error('인증정보 조회 오류:', err);
+            return interaction.editReply('⚠️ 인증 기록을 조회하는 중 오류가 발생했습니다.');
         }
     }
 
@@ -886,7 +933,8 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/말 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
                      `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (관리자 전용)\n` +
-                     `• \`/인증정보삭제\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
+                     `• \`/인증정보 (아이디)\` - 특정 유저의 인증 기록을 조회합니다. (관리자 전용)\n` +
+                     `• \`/인증정보삭제 (아이디)\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
                      `• \`/인증역할\` - 인증 완료 역할을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
@@ -1001,7 +1049,7 @@ app.get('/callback', async (req, res) => {
     const serverIcon = targetGuild ? targetGuild.iconURL({ dynamic: true, size: 256 }) : '';
 
     if (isPrivateIP(userIp)) {
-        return res.status(403).send(getStyledPage('인증 실패', '사설 IP(내부 네트워크) 환경에서는 인증을 진행할 수 없습니다.', 'block', serverName, serverIcon));
+        return res.status(403).send(getStyledPage('인증 실패', '사설 IP 또는 IPv6 주소 환경에서는 인증을 진행할 수 없습니다.', 'block', serverName, serverIcon));
     }
 
     if (!code) {
