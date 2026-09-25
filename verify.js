@@ -210,7 +210,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록
+// 📌 슬래시 명령어 정의 목록 (/말하기 추가)
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -218,6 +218,10 @@ const commands = [
         .setName('역할지급')
         .setDescription('지정한 역할을 자신에게 지급합니다.')
         .addStringOption(option => option.setName('역할').setDescription('지급받을 역할의 이름 또는 ID').setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('말하기')
+        .setDescription('봇이 지정된 내용을 채팅으로 출력합니다. (최고 관리자 전용)')
+        .addStringOption(option => option.setName('내용').setDescription('봇이 말할 텍스트 내용').setRequired(true)),
     new SlashCommandBuilder()
         .setName('인증정보삭제')
         .setDescription('특정 유저의 모든 인증 기록을 로그 채널에서 삭제합니다. (관리자 전용)')
@@ -269,12 +273,10 @@ client.on('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
-        console.log('[슬래시 명령어] 중복 제거 및 동기화 시작...');
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
-        if (GUILD_ID) {
-            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-            console.log(`[슬래시 명령어] 지정된 테스트 서버(ID: ${GUILD_ID})에 단독 등록 완료![cite: 3]`);
-        }
+        console.log('[슬래시 명령어] 전역 및 테스트 서버 동기화 시작...');
+        // 모든 서버에서 즉시 사용 가능하도록 전역 명령어로 등록
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log('[슬래시 명령어] 전역 등록 완료 (모든 서버에서 사용 가능)!');
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
     }
@@ -353,6 +355,7 @@ function isProfane(text) {
     return false;
 }
 
+// 💬 봇 메시지 감지 및 자동검열 로직 수정 보완
 client.on('messageCreate', async (message) => {
     if (!message.guild || message.author.bot) return;
     const content = message.content.trim();
@@ -368,74 +371,68 @@ client.on('messageCreate', async (message) => {
     const isServerOwner = message.guild.ownerId === userId;
     const isAdmin = isBotOwner || isServerOwner || (member && member.permissions.has(PermissionsBitField.Flags.Administrator));
 
-    if (!isAdmin && isAutoCensorEnabled) {
-        if (isProfane(content)) {
-            const deleted = await message.delete().catch(() => null);
-            if (!deleted) {
-                const failNotice = await message.channel.send(`<@${userId}>님, 욕설이 감지되었으나 봇에게 **메시지 관리(메시지 삭제) 권한**이 없습니다! 채널 권한을 확인해 주세요.`);
-                setTimeout(() => failNotice.delete().catch(() => {}), 5000);
-                return;
+    // 관리자이거나 자동검열이 꺼져있으면 검사 패스
+    if (isAdmin || !isAutoCensorEnabled) {
+        if (content === '!서버정보') {
+            const isActivated = settings[guildId] && settings[guildId].activated === true;
+            const isConfigured = settings[guildId] && (settings[guildId].verifiedRoleId || settings[guildId].logChannelId);
+
+            if (!isActivated || !isConfigured) {
+                return message.reply('⚠️ **해당 서버는 아직 `/서버인증` 및 설정(`/인증역할` 또는 `/인증로그`)이 완료되지 않았습니다.**');
             }
 
             try {
-                await member.timeout(timeoutMinutes * 60 * 1000, '자동 타임아웃: 글로벌 욕설 및 비속어 감지됨');
-                const warningMsg = await message.channel.send(`<@${userId}>님이 욕설(비속어) 사유로 **${timeoutMinutes}분** 동안 타임아웃 당했습니다.`);
-                setTimeout(() => warningMsg.delete().catch(() => {}), 5000);
+                const infoText = await fetchServerInfo(message.guild, client);
+                return message.reply(infoText);
             } catch (err) {
-                const failNotice = await message.channel.send(`<@${userId}>님이 욕설을 사용했으나, 봇의 역할 위치가 유저보다 낮거나 **타임아웃 권한이 없어** 타임아웃 처리에 실패했습니다! (서버 설정에서 봇 역할을 맨 위로 올려주세요)`);
-                setTimeout(() => failNotice.delete().catch(() => {}), 6000);
+                return message.reply('⚠️ 서버 정보를 불러오는 중 오류가 발생했습니다.');
             }
-            return;
         }
-
-        const now = Date.now();
-        if (!userMessageHistory.has(userId)) {
-            userMessageHistory.set(userId, []);
-        }
-
-        let history = userMessageHistory.get(userId);
-        history = history.filter(item => now - item.time < 60000);
-        history.push({ content: content, time: now });
-        userMessageHistory.set(userId, history);
-
-        const sameContentCount = history.filter(item => item.content === content).length;
-        if (sameContentCount >= 10) {
-            try {
-                const fetched = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
-                if (fetched) {
-                    const spamMsgs = fetched.filter(m => m.author.id === userId && m.content === content);
-                    for (const sm of spamMsgs.values()) {
-                        await sm.delete().catch(() => {});
-                    }
-                }
-
-                await member.timeout(timeoutMinutes * 60 * 1000, '자동 타임아웃: 도배 감지됨');
-                const spamWarning = await message.channel.send(`<@${userId}>님이 도배 행위 사유로 **${timeoutMinutes}분** 동안 타임아웃 당했습니다.`);
-                setTimeout(() => spamWarning.delete().catch(() => {}), 5000);
-
-                userMessageHistory.set(userId, []);
-            } catch (err) {
-                const failNotice = await message.channel.send(`<@${userId}>님이 도배를 시도했으나 **타임아웃 권한이 부족합니다!**`).catch(() => null);
-                if (failNotice) setTimeout(() => failNotice.delete().catch(() => {}), 4000);
-            }
-            return;
-        }
+        return;
     }
 
-    if (content === '!서버정보') {
-        const isActivated = settings[guildId] && settings[guildId].activated === true;
-        const isConfigured = settings[guildId] && (settings[guildId].verifiedRoleId || settings[guildId].logChannelId);
-
-        if (!isActivated || !isConfigured) {
-            return message.reply('⚠️ **해당 서버는 아직 `/서버인증` 및 설정(`/인증역할` 또는 `/인증로그`)이 완료되지 않았습니다.**');
-        }
-
+    // 1. 욕설 감지
+    if (isProfane(content)) {
         try {
-            const infoText = await fetchServerInfo(message.guild, client);
-            return message.reply(infoText);
-        } catch (err) {
-            return message.reply('⚠️ 서버 정보를 불러오는 중 오류가 발생했습니다.');
-        }
+            await message.delete().catch(() => {});
+            await member.timeout(timeoutMinutes * 60 * 1000, '자동 타임아웃: 글로벌 욕설 및 비속어 감지됨').catch(() => {});
+            
+            const warningMsg = await message.channel.send(`<@${userId}>님이 욕설(비속어) 사유로 **${timeoutMinutes}분** 동안 타임아웃 당했습니다.`);
+            setTimeout(() => warningMsg.delete().catch(() => {}), 5000);
+        } catch (err) {}
+        return;
+    }
+
+    // 2. 도배 감지 (1분 내 동일 메시지 10회 이상)
+    const now = Date.now();
+    if (!userMessageHistory.has(userId)) {
+        userMessageHistory.set(userId, []);
+    }
+
+    let history = userMessageHistory.get(userId);
+    history = history.filter(item => now - item.time < 60000);
+    history.push({ content: content, time: now });
+    userMessageHistory.set(userId, history);
+
+    const sameContentCount = history.filter(item => item.content === content).length;
+    if (sameContentCount >= 10) {
+        try {
+            const fetched = await message.channel.messages.fetch({ limit: 20 }).catch(() => null);
+            if (fetched) {
+                const spamMsgs = fetched.filter(m => m.author.id === userId && m.content === content);
+                for (const sm of spamMsgs.values()) {
+                    await sm.delete().catch(() => {});
+                }
+            }
+
+            await member.timeout(timeoutMinutes * 60 * 1000, '자동 타임아웃: 도배 감지됨').catch(() => {});
+            
+            const spamWarning = await message.channel.send(`<@${userId}>님이 도배 행위 사유로 **${timeoutMinutes}분** 동안 타임아웃 당했습니다.`);
+            setTimeout(() => spamWarning.delete().catch(() => {}), 5000);
+
+            userMessageHistory.set(userId, []);
+        } catch (err) {}
+        return;
     }
 });
 
@@ -445,6 +442,16 @@ client.on('interactionCreate', async (interaction) => {
     const { commandName, user, guild } = interaction;
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
+
+    // 💡 /말하기 명령어 추가 (관리자 전용)
+    if (commandName === '말하기') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
+
+        const text = interaction.options.getString('내용');
+        await interaction.message?.delete().catch(() => {}); // 명령어 입력 흔적 제거 시도
+        await interaction.channel.send(text).catch(() => {});
+        return interaction.reply({ content: '✅ 메시지가 성공적으로 출력되었습니다!', ephemeral: true });
+    }
 
     if (commandName === '서버인증') {
         const isServerOwner = guild ? guild.ownerId === userId : false;
@@ -456,7 +463,6 @@ client.on('interactionCreate', async (interaction) => {
         settings[guildId].activated = true;
         saveSettings(settings);
 
-        // 💡 [수정됨] scope에 bot을 빼고 유저 계정 연동 권한만 지정 (서버 선택 드롭다운 제거)
         const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify\%20email\%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 계정 승인하기').setURL(userAppAuthUrl));
 
@@ -663,7 +669,6 @@ client.on('interactionCreate', async (interaction) => {
             await guild.roles.create({ name: '✅ 인증완료', color: '#57F287' });
             await guild.roles.create({ name: '🔒 미인증', color: '#99AAB5' });
 
-            // 💡 [수정됨] scope에 bot을 빼고 유저 계정 연동 권한만 지정
             const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(userAppAuthUrl));
@@ -797,6 +802,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
+                     `• \`/말하기 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
                      `• \`/인증정보삭제\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
                      `• \`/인증역할\` - 인증 완료 역할을 설정합니다. (소유자 전용)\n` +
@@ -833,7 +839,6 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 💡 /인증 명령어: 기존 인증 패널 메시지들을 모두 삭제하고 유저 앱 승인 팝업 URL이 담긴 새로운 패널 전송
     if (commandName === '인증') {
         const isServerOwner = guild.ownerId === userId;
         if (!isServerOwner && !isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 **서버 소유자**만 사용할 수 있습니다.', ephemeral: true });
@@ -848,7 +853,6 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            // 💡 [수정됨] scope에 bot을 빼고 유저 계정 연동 권한만 지정
             const userAppAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&integration_type=0&scope=identify%20email%20guilds&redirect_uri=${encodeURIComponent(`${FIXED_RENDER_URL}/callback`)}&response_type=code&state=${Buffer.from(JSON.stringify({ guildId })).toString('base64')}`;
 
             const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🔒 디스코드 인증하기').setURL(userAppAuthUrl));
