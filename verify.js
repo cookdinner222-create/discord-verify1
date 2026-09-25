@@ -438,24 +438,54 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말하기 명령어 (외부 봇 차단 및 전송 실패 시 "외부봇 막혔습니다" 출력 로직 적용)
+    // 💡 /말하기 명령어 (Send Publicly 버튼 상호작용 방식 적용 - 외부 봇 호환)
     if (commandName === '말하기') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
         const text = interaction.options.getString('내용');
+        const sendButtonId = `say_send_${Date.now()}`;
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(sendButtonId)
+                .setLabel('Send Publicly')
+                .setStyle(ButtonStyle.Success)
+        );
 
-        try {
-            const targetChannel = await client.channels.fetch(interaction.channelId);
-            if (targetChannel) {
-                await targetChannel.send(text);
-                return interaction.reply({ content: '✅ 메시지가 성공적으로 출력되었습니다.', ephemeral: true });
-            } else {
-                return interaction.reply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)', ephemeral: true });
+        await interaction.reply({
+            content: `use the button to send\n\n**Message Preview:**\n${text}`,
+            components: [row],
+            ephemeral: true
+        });
+
+        const filter = i => i.customId === sendButtonId && i.user.id === user.id;
+        const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+
+        collector.on('collect', async i => {
+            try {
+                await i.update({ content: 'sending...', components: [] });
+
+                const targetChannel = await client.channels.fetch(interaction.channelId);
+                if (targetChannel) {
+                    await targetChannel.send(text);
+                    await i.editReply({ content: text, components: [] });
+                } else {
+                    await i.editReply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)', components: [] });
+                }
+            } catch (err) {
+                console.error('말하기 버튼 전송 오류:', err);
+                await i.editReply({ content: '⛔ 외부봇 막혔습니다', components: [] });
             }
-        } catch (err) {
-            console.error('말하기 전송 오류:', err);
-            return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true });
-        }
+        });
+
+        collector.on('end', async collected => {
+            if (collected.size === 0) {
+                try {
+                    await interaction.editReply({ content: '⏰ 시간이 만료되었습니다.', components: [] }).catch(() => {});
+                } catch (e) {}
+            }
+        });
+
+        return;
     }
 
     if (commandName === '서버인증') {
