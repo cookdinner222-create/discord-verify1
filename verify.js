@@ -451,7 +451,7 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말 명령어 처리
+    // 💡 /말 명령어 처리 (타임아웃 방지 우선 응답 적용)
     if (commandName === '말') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
@@ -464,6 +464,7 @@ client.on('interactionCreate', async (interaction) => {
                 .setStyle(ButtonStyle.Success)
         );
 
+        // 3초 제한 방어를 위해 즉시 reply 처리
         await interaction.reply({
             content: `use the button to send\n\n**Message Preview:**\n${text}`,
             components: [row],
@@ -475,6 +476,7 @@ client.on('interactionCreate', async (interaction) => {
 
         collector.on('collect', async i => {
             try {
+                // 버튼 누르자마자 즉시 상호작용 업데이트
                 await i.update({ content: 'sending...', components: [] });
 
                 const targetChannel = await client.channels.fetch(interaction.channelId);
@@ -501,9 +503,12 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 처리 (서버/외부봇 모두 호환)
+    // 💡 /고스트핑 명령어 처리 (deferReply로 3초 타임아웃 원천 차단)
     if (commandName === '고스트핑') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
+
+        // 채널 페치 전 3초 제한 방어를 위해 선defer 실행 (ephemeral: true)
+        await interaction.deferReply({ ephemeral: true });
 
         const targetUser = interaction.options.getUser('유저');
         const text = interaction.options.getString('내용');
@@ -512,11 +517,10 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const targetChannel = await client.channels.fetch(interaction.channelId);
             if (!targetChannel) {
-                return interaction.reply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)', ephemeral: true });
+                return interaction.editReply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)' });
             }
 
             if (farmOption === 'off') {
-                await interaction.reply({ content: '✅ 고스트핑 전송 중...', ephemeral: true });
                 const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
                 await sentMsg.delete().catch(() => {});
                 return interaction.editReply({ content: '✅ 고스트핑 전송 및 멘션 삭제가 완료되었습니다.' });
@@ -529,10 +533,9 @@ client.on('interactionCreate', async (interaction) => {
                     new ButtonBuilder().setCustomId(`ghost_50_${targetUser.id}_${uniqueId}`).setLabel('50번').setStyle(ButtonStyle.Danger)
                 );
 
-                await interaction.reply({
+                await interaction.editReply({
                     content: `📌 **팜 모드 활성화됨**\n대상 유저: <@${targetUser.id}>\n내용: \`${text}\`\n아래 버튼을 눌러 전송 횟수를 선택하세요.`,
-                    components: [row],
-                    ephemeral: true
+                    components: [row]
                 });
 
                 const filter = i => i.customId.startsWith(`ghost_`) && i.user.id === user.id;
@@ -562,12 +565,7 @@ client.on('interactionCreate', async (interaction) => {
             }
         } catch (err) {
             console.error('고스트핑 오류:', err);
-            // 유저 설치 봇 혹은 권한 문제로 interaction.reply가 막혔을 때 안전하게 처리
-            if (!interaction.replied && !interaction.deferred) {
-                return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true }).catch(() => {});
-            } else {
-                return interaction.editReply({ content: '⛔ 외부봇 막혔습니다' }).catch(() => {});
-            }
+            return interaction.editReply({ content: '⛔ 외부봇 막혔습니다' }).catch(() => {});
         }
     }
 
@@ -930,7 +928,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
                      `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
-                     `• \`/역할제거\` - 지정된 역할을 제거합니다.\n` +
+                     `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
                      `• \`/서버폭파 (서버아이디)\` - 지정된 서버를 폭파합니다. (관리자 전용)\n` +
                      `• \`/가입서버\` - 봇이 가입된 서버 목록을 DM으로 받습니다. (관리자 전용)\n` +
