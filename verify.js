@@ -438,22 +438,24 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말하기 명령어 (채널 페치 전송 및 응답 에러 방지 보완 완료)
+    // 💡 /말하기 명령어 (외부 봇 차단 및 전송 실패 시 "외부봇 막혔습니다" 출력 로직 적용)
     if (commandName === '말하기') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
         const text = interaction.options.getString('내용');
-        await interaction.reply({ content: '✅ 메시지를 출력합니다.', ephemeral: true });
 
         try {
             const targetChannel = await client.channels.fetch(interaction.channelId);
             if (targetChannel) {
                 await targetChannel.send(text);
+                return interaction.reply({ content: '✅ 메시지가 성공적으로 출력되었습니다.', ephemeral: true });
+            } else {
+                return interaction.reply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)', ephemeral: true });
             }
         } catch (err) {
             console.error('말하기 전송 오류:', err);
+            return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true });
         }
-        return;
     }
 
     if (commandName === '서버인증') {
