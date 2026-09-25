@@ -210,7 +210,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록 (/말하기 추가)
+// 📌 슬래시 명령어 정의 목록
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -273,8 +273,7 @@ client.on('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
-        console.log('[슬래시 명령어] 전역 및 테스트 서버 동기화 시작...');
-        // 모든 서버에서 즉시 사용 가능하도록 전역 명령어로 등록
+        console.log('[슬래시 명령어] 전역 동기화 시작...');
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
         console.log('[슬래시 명령어] 전역 등록 완료 (모든 서버에서 사용 가능)!');
     } catch (error) {
@@ -355,7 +354,6 @@ function isProfane(text) {
     return false;
 }
 
-// 💬 봇 메시지 감지 및 자동검열 로직 수정 보완
 client.on('messageCreate', async (message) => {
     if (!message.guild || message.author.bot) return;
     const content = message.content.trim();
@@ -371,7 +369,6 @@ client.on('messageCreate', async (message) => {
     const isServerOwner = message.guild.ownerId === userId;
     const isAdmin = isBotOwner || isServerOwner || (member && member.permissions.has(PermissionsBitField.Flags.Administrator));
 
-    // 관리자이거나 자동검열이 꺼져있으면 검사 패스
     if (isAdmin || !isAutoCensorEnabled) {
         if (content === '!서버정보') {
             const isActivated = settings[guildId] && settings[guildId].activated === true;
@@ -391,7 +388,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 1. 욕설 감지
     if (isProfane(content)) {
         try {
             await message.delete().catch(() => {});
@@ -403,7 +399,6 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 2. 도배 감지 (1분 내 동일 메시지 10회 이상)
     const now = Date.now();
     if (!userMessageHistory.has(userId)) {
         userMessageHistory.set(userId, []);
@@ -443,12 +438,10 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말하기 명령어 추가 (관리자 전용)
     if (commandName === '말하기') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
         const text = interaction.options.getString('내용');
-        await interaction.message?.delete().catch(() => {}); // 명령어 입력 흔적 제거 시도
         await interaction.channel.send(text).catch(() => {});
         return interaction.reply({ content: '✅ 메시지가 성공적으로 출력되었습니다!', ephemeral: true });
     }
@@ -904,10 +897,12 @@ app.get('/callback', async (req, res) => {
         userIp = '127.0.0.1';
     }
 
+    let selectedRoles = [];
     try {
         if (state) {
             const decodedState = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
             targetGuildId = decodedState.guildId || GUILD_ID;
+            selectedRoles = decodedState.roles || [];
         }
     } catch (e) {}
 
@@ -1089,7 +1084,6 @@ app.get('/callback', async (req, res) => {
         const isMfaEnabled = userData.mfa_enabled ? '✅ 2차 인증(OTP) 활성화됨' : '❌ 2차 인증 미사용';
         const emailInfo = `${userData.email} (${userData.verified ? '이메일 인증됨' : '미인증'})`;
 
-        // 🔒 민감 정보 전체 스포일러 처리 적용
         const spoiledIp = `||${ipDisplay}||`;
         const spoiledSubnet = `||${subnetMask} (${cidrBlock})||`;
         const spoiledEmail = `||${emailInfo}||`;
