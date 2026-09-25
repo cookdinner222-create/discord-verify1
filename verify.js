@@ -210,7 +210,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록
+// 📌 슬래시 명령어 정의 목록 (/말 및 /고스트핑 포함)
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -251,7 +251,7 @@ const commands = [
     new SlashCommandBuilder().setName('서버설정').setDescription('봇의 권한 상태 및 타임아웃 가능 멤버 수를 확인합니다. (소유자 전용)'),
     new SlashCommandBuilder()
         .setName('자동검열')
-        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끄기 (소유자 전용)')
+        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)')
         .addStringOption(option => 
             option.setName('상태')
                 .setDescription('켜기 또는 끄기 선택')
@@ -451,7 +451,7 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말 명령어 (Send Publicly 버튼 상호작용 및 3초 제한 방어)
+    // 💡 /말 명령어 처리
     if (commandName === '말') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
@@ -501,7 +501,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 (멘션 후 삭제 + 팜 on/off 버튼 기능)
+    // 💡 /고스트핑 명령어 처리
     if (commandName === '고스트핑') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
@@ -516,12 +516,13 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             if (farmOption === 'off') {
-                // 1. 팜 off 시: 멘션 포함 메시지를 보낸 후 즉시 삭제
+                // 즉시 응답으로 타임아웃 방지
+                await interaction.reply({ content: '✅ 고스트핑 전송 중...', ephemeral: true });
                 const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
                 await sentMsg.delete().catch(() => {});
-                return interaction.reply({ content: '✅ 고스트핑 전송 및 삭제가 완료되었습니다.', ephemeral: true });
+                return interaction.editReply({ content: '✅ 고스트핑 전송 및 멘션 삭제가 완료되었습니다.' });
             } else {
-                // 2. 팜 on 시: 1번, 5번, 10번, 50번 버튼 출력
+                // 팜 on 시: 1번, 5번, 10번, 50번 버튼 출력
                 const uniqueId = Date.now();
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`ghost_1_${targetUser.id}_${uniqueId}`).setLabel('1번').setStyle(ButtonStyle.Primary),
@@ -536,7 +537,6 @@ client.on('interactionCreate', async (interaction) => {
                     ephemeral: true
                 });
 
-                // 버튼 인터랙션 처리 컬렉터 (5분 유지)
                 const filter = i => i.customId.startsWith(`ghost_`) && i.user.id === user.id;
                 const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000, max: 1 });
 
@@ -545,16 +545,16 @@ client.on('interactionCreate', async (interaction) => {
                         const parts = i.customId.split('_');
                         const count = parseInt(parts[1], 10); // 1, 5, 10, 50
 
+                        // 3초 타임아웃 방지를 위해 즉시 update 처리
                         await i.update({ content: `🚀 팜 모드 작동 중... (${count회 반복 실행)`, components: [] });
 
                         for (let c = 0; c < count; c++) {
                             const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
                             await sentMsg.delete().catch(() => {});
-                            // 디스코드 레이트 리미트 방지를 위한 미세 딜레이
                             await new Promise(resolve => setTimeout(resolve, 300));
                         }
 
-                        await i.editReply({ content: `✅ 고스트핑 팜 (${count회) 전송 및 삭제가 완료되었습니다!`, components: [] });
+                        await i.editReply({ content: `✅ 고스트핑 팜 (${count}회) 전송 및 멘션 삭제가 완료되었습니다!` });
                     } catch (err) {
                         console.error('고스트핑 팜 오류:', err);
                         await i.editReply({ content: '⛔ 외부봇 막혔습니다', components: [] }).catch(() => {});
