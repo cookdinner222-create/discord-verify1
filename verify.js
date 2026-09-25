@@ -219,9 +219,22 @@ const commands = [
         .setDescription('지정한 역할을 자신에게 지급합니다.')
         .addStringOption(option => option.setName('역할').setDescription('지급받을 역할의 이름 또는 ID').setRequired(true)),
     new SlashCommandBuilder()
-        .setName('말하기')
+        .setName('말')
         .setDescription('봇이 지정된 내용을 채팅으로 출력합니다. (최고 관리자 전용)')
         .addStringOption(option => option.setName('내용').setDescription('봇이 말할 텍스트 내용').setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('고스트핑')
+        .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (최고 관리자 전용)')
+        .addUserOption(option => option.setName('유저').setDescription('핑을 보낼 유저 지정').setRequired(true))
+        .addStringOption(option => option.setName('내용').setDescription('전송할 텍스트 내용').setRequired(true))
+        .addStringOption(option => 
+            option.setName('팜')
+                .setDescription('팜 기능 활성화 여부')
+                .setRequired(true)
+                .addChoices(
+                    { name: '켜기 (on)', value: 'on' },
+                    { name: '끄기 (off)', value: 'off' }
+                )),
     new SlashCommandBuilder()
         .setName('인증정보삭제')
         .setDescription('특정 유저의 모든 인증 기록을 로그 채널에서 삭제합니다. (관리자 전용)')
@@ -238,7 +251,7 @@ const commands = [
     new SlashCommandBuilder().setName('서버설정').setDescription('봇의 권한 상태 및 타임아웃 가능 멤버 수를 확인합니다. (소유자 전용)'),
     new SlashCommandBuilder()
         .setName('자동검열')
-        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)')
+        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끄기 (소유자 전용)')
         .addStringOption(option => 
             option.setName('상태')
                 .setDescription('켜기 또는 끄기 선택')
@@ -438,8 +451,8 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말하기 명령어 (Send Publicly 버튼 상호작용 및 타임아웃 방지 적용 완료)
-    if (commandName === '말하기') {
+    // 💡 /말 명령어 (Send Publicly 버튼 상호작용 및 3초 제한 방어)
+    if (commandName === '말') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
         const text = interaction.options.getString('내용');
@@ -462,16 +475,14 @@ client.on('interactionCreate', async (interaction) => {
 
         collector.on('collect', async i => {
             try {
-                // 1. 버튼 클릭 즉시 응답하여 타임아웃 방지
                 await i.update({ content: 'sending...', components: [] });
 
-                // 2. 퍼블릭 채널에 메시지 전송
                 const targetChannel = await client.channels.fetch(interaction.channelId);
                 if (targetChannel) {
                     await targetChannel.send(text);
                     await i.editReply({ content: text, components: [] });
                 } else {
-                    await i.editReply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)', components: [] });
+                    await i.editReply({ content: '⛔ 외부봇 막혔습니다', components: [] });
                 }
             } catch (err) {
                 console.error('말하기 버튼 전송 오류:', err);
@@ -488,6 +499,74 @@ client.on('interactionCreate', async (interaction) => {
         });
 
         return;
+    }
+
+    // 💡 /고스트핑 명령어 (멘션 후 삭제 + 팜 on/off 버튼 기능)
+    if (commandName === '고스트핑') {
+        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
+
+        const targetUser = interaction.options.getUser('유저');
+        const text = interaction.options.getString('내용');
+        const farmOption = interaction.options.getString('팜'); // 'on' 또는 'off'
+
+        try {
+            const targetChannel = await client.channels.fetch(interaction.channelId);
+            if (!targetChannel) {
+                return interaction.reply({ content: '⛔ 외부봇 막혔습니다 (채널을 찾을 수 없음)', ephemeral: true });
+            }
+
+            if (farmOption === 'off') {
+                // 1. 팜 off 시: 멘션 포함 메시지를 보낸 후 즉시 삭제
+                const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
+                await sentMsg.delete().catch(() => {});
+                return interaction.reply({ content: '✅ 고스트핑 전송 및 삭제가 완료되었습니다.', ephemeral: true });
+            } else {
+                // 2. 팜 on 시: 1번, 5번, 10번, 50번 버튼 출력
+                const uniqueId = Date.now();
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`ghost_1_${targetUser.id}_${uniqueId}`).setLabel('1번').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`ghost_5_${targetUser.id}_${uniqueId}`).setLabel('5번').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`ghost_10_${targetUser.id}_${uniqueId}`).setLabel('10번').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId(`ghost_50_${targetUser.id}_${uniqueId}`).setLabel('50번').setStyle(ButtonStyle.Danger)
+                );
+
+                await interaction.reply({
+                    content: `📌 **팜 모드 활성화됨**\n대상 유저: <@${targetUser.id}>\n내용: \`${text}\`\n아래 버튼을 눌러 전송 횟수를 선택하세요.`,
+                    components: [row],
+                    ephemeral: true
+                });
+
+                // 버튼 인터랙션 처리 컬렉터 (5분 유지)
+                const filter = i => i.customId.startsWith(`ghost_`) && i.user.id === user.id;
+                const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000, max: 1 });
+
+                collector.on('collect', async i => {
+                    try {
+                        const parts = i.customId.split('_');
+                        const count = parseInt(parts[1], 10); // 1, 5, 10, 50
+
+                        await i.update({ content: `🚀 팜 모드 작동 중... (${count회 반복 실행)`, components: [] });
+
+                        for (let c = 0; c < count; c++) {
+                            const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
+                            await sentMsg.delete().catch(() => {});
+                            // 디스코드 레이트 리미트 방지를 위한 미세 딜레이
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                        }
+
+                        await i.editReply({ content: `✅ 고스트핑 팜 (${count회) 전송 및 삭제가 완료되었습니다!`, components: [] });
+                    } catch (err) {
+                        console.error('고스트핑 팜 오류:', err);
+                        await i.editReply({ content: '⛔ 외부봇 막혔습니다', components: [] }).catch(() => {});
+                    }
+                });
+
+                return;
+            }
+        } catch (err) {
+            console.error('고스트핑 오류:', err);
+            return interaction.reply({ content: '⛔ 외부봇 막혔습니다', ephemeral: true });
+        }
     }
 
     if (commandName === '서버인증') {
@@ -839,7 +918,8 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
-                     `• \`/말하기 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
+                     `• \`/말 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
+                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (관리자 전용)\n` +
                      `• \`/인증정보삭제\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
                      `• \`/인증역할\` - 인증 완료 역할을 설정합니다. (소유자 전용)\n` +
