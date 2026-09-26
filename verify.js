@@ -214,7 +214,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록
+// 📌 슬래시 명령어 정의 목록 (/고스트핑 옵션 선택사항 변경 완료)
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -230,11 +230,11 @@ const commands = [
         .setName('고스트핑')
         .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (최고 관리자 전용)')
         .addUserOption(option => option.setName('유저').setDescription('핑을 보낼 유저 지정').setRequired(true))
-        .addStringOption(option => option.setName('내용').setDescription('전송할 텍스트 내용').setRequired(true))
+        .addStringOption(option => option.setName('내용').setDescription('전송할 텍스트 내용').setRequired(false))
         .addStringOption(option => 
             option.setName('팜')
                 .setDescription('팜 기능 활성화 여부')
-                .setRequired(true)
+                .setRequired(false)
                 .addChoices(
                     { name: '켜기 (on)', value: 'on' },
                     { name: '끄기 (off)', value: 'off' }
@@ -296,7 +296,7 @@ client.on('ready', async () => {
     try {
         console.log('[슬래시 명령어] 전역 동기화 시작...');
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('[슬래시 명령어] 전역 등록 완료 (모든 서버에서 사용 가능)!');
+        console.log('[슬래시 명령어] 전역 등록 완료 (모든 서버 및 DM에서 사용 가능)!');
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
     }
@@ -459,7 +459,7 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말 명령어 (권한 막혀있으면 나에게만 보이는 텍스트로 처리)
+    // 💡 /말 명령어 (DM 및 서버 채널 모두 지원)
     if (commandName === '말') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
@@ -471,26 +471,26 @@ client.on('interactionCreate', async (interaction) => {
                 await targetChannel.send(text);
                 return interaction.reply({ content: '✅ 메시지가 성공적으로 출력되었습니다.', ephemeral: true });
             } else {
-                return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널에 전송할 수 없습니다.\n\n**[출력하려던 내용]**\n${text}`, ephemeral: true });
+                return interaction.reply({ content: `⛔ 채널을 찾을 수 없습니다.\n\n**[출력하려던 내용]**\n${text}`, ephemeral: true });
             }
         } catch (err) {
             console.error('말하기 전송 오류:', err);
-            return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널에 전송할 수 없습니다.\n\n**[출력하려던 내용]**\n${text}`, ephemeral: true });
+            return interaction.reply({ content: `⛔ 메시지 전송에 실패했습니다.\n\n**[출력하려던 내용]**\n${text}`, ephemeral: true });
         }
     }
 
-    // 💡 /고스트핑 명령어 (권한 막혀있으면 나에게만 보이는 텍스트로 처리)
+    // 💡 /고스트핑 명령어 (내용/팜 선택사항 적용, DM 및 서버 채널 모두 지원)
     if (commandName === '고스트핑') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
         const targetUser = interaction.options.getUser('유저');
-        const text = interaction.options.getString('내용');
-        const farmOption = interaction.options.getString('팜'); // 'on' 또는 'off'
+        const text = interaction.options.getString('내용') || '고스트핑'; // 내용이 없으면 기본값 적용
+        const farmOption = interaction.options.getString('팜') || 'off'; // 팜이 없으면 off 적용
 
         try {
             const targetChannel = await client.channels.fetch(interaction.channelId);
             if (!targetChannel) {
-                return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널을 찾을 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
+                return interaction.reply({ content: `⛔ 채널을 찾을 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
             }
 
             if (farmOption === 'off') {
@@ -531,7 +531,7 @@ client.on('interactionCreate', async (interaction) => {
                         await i.editReply({ content: `✅ 고스트핑 팜 (${count}회) 전송 및 멘션 삭제가 완료되었습니다!` });
                     } catch (err) {
                         console.error('고스트핑 팜 오류:', err);
-                        await i.editReply({ content: `⛔ 외부봇 권한이 막혀 팜 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, components: [] }).catch(() => {});
+                        await i.editReply({ content: `⛔ 팜 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, components: [] }).catch(() => {});
                     }
                 });
 
@@ -539,7 +539,7 @@ client.on('interactionCreate', async (interaction) => {
             }
         } catch (err) {
             console.error('고스트핑 오류:', err);
-            return interaction.reply({ content: `⛔ 외부봇 권한이 막혀 채널에 전송할 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
+            return interaction.reply({ content: `⛔ 고스트핑 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
         }
     }
 
@@ -942,7 +942,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
                      `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
-                     `• \`/역할제거\` - 지정된 역할을 제거합니다.\n` +
+                     `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
                      `• \`/서버폭파 (서버아이디)\` - 지정된 서버를 폭파합니다. (관리자 전용)\n` +
                      `• \`/가입서버\` - 봇이 가입된 서버 목록을 DM으로 받습니다. (관리자 전용)\n` +
