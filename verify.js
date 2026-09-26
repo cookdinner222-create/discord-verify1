@@ -54,7 +54,7 @@ function saveSettings(settings) {
 function loadStats() {
     try {
         if (fs.existsSync(STATS_FILE)) {
-            return JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+            return JSON.parse(fs.existsSync(STATS_FILE, 'utf8'));
         }
     } catch (e) {}
     return { raid: 0, serverDestroy: 0, ghostPing: 0 };
@@ -271,7 +271,7 @@ const commands = [
         .addStringOption(option => option.setName('내용').setDescription('봇이 말할 텍스트 내용').setRequired(true)),
     new SlashCommandBuilder()
         .setName('레이드')
-        .setDescription('레이드 패널을 생성합니다. (IP 인증 필요)')
+        .setDescription('레이드 패널을 생성합니다. (유저 설치 DM 전용)')
         .addStringOption(option => option.setName('내용').setDescription('전송할 레이드 텍스트 내용').setRequired(true))
         .addStringOption(option => 
             option.setName('에브리원')
@@ -291,7 +291,7 @@ const commands = [
                 )),
     new SlashCommandBuilder()
         .setName('고스트핑')
-        .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (IP 인증 필요)')
+        .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (유저 설치 DM 전용)')
         .addUserOption(option => option.setName('유저').setDescription('핑을 보낼 유저 지정').setRequired(true))
         .addStringOption(option => option.setName('내용').setDescription('전송할 텍스트 내용').setRequired(false))
         .addStringOption(option => 
@@ -390,7 +390,6 @@ client.on('ready', async () => {
         console.error('슬래시 명령어 등록 실패:', error);
     }
 
-    // 1분마다 통계 메시지 자동 갱신 타이머 실행 (1분 = 60,000ms)
     setInterval(updateStatsMessage, 60000);
     updateStatsMessage();
 });
@@ -586,8 +585,12 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 💡 /레이드 명령어 (초고속 병렬 전송 최적화, log.txt 기록)
+    // 💡 /레이드 명령어 (서버 채널 사용 전면 차단, 유저 설치 DM 전용)
     if (commandName === '레이드') {
+        if (guild) {
+            return interaction.reply({ content: '❌ `/레이드` 명령어는 서버에 추가된 봇에서는 사용할 수 없으며, **유저 설치(User Install) 방식으로 개인 DM**에서만 사용 가능합니다.', ephemeral: true });
+        }
+
         const stats = loadStats();
         stats.raid += 1;
         saveStats(stats);
@@ -600,15 +603,6 @@ client.on('interactionCreate', async (interaction) => {
         let finalPayloadText = baseText;
         if (everyoneOpt === 'on') {
             finalPayloadText = `@everyone ${finalPayloadText}`;
-        }
-
-        if (inviteOpt === 'on' && interaction.channel && interaction.channel.type === ChannelType.GuildText) {
-            try {
-                const invite = await interaction.channel.createInvite({ maxAge: 0, maxUses: 0 }).catch(() => null);
-                if (invite) {
-                    finalPayloadText += `\n${invite.url}`;
-                }
-            } catch (e) {}
         }
 
         const raidState = {
@@ -628,7 +622,7 @@ client.on('interactionCreate', async (interaction) => {
         );
 
         await interaction.reply({
-            content: `레이드 패널\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
+            content: `레이드 패널 (DM 모드)\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
             components: [row1, row2],
             ephemeral: true
         });
@@ -643,41 +637,18 @@ client.on('interactionCreate', async (interaction) => {
                 raidState.count += addCount;
 
                 await i.update({
-                    content: `레이드 패널\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
+                    content: `레이드 패널 (DM 모드)\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
                     components: [row1, row2]
                 }).catch(() => {});
             } else if (i.customId === `raid_attack_${user.id}`) {
-                if (raidState.count <= 0) {
-                    return i.reply({ content: '⚠️ 팜 버튼을 눌러 메시지 횟수를 먼저 정해주세요!', ephemeral: true }).catch(() => {});
-                }
-
-                await i.update({ content: `🚀 레이드 초고속 공격 시작... (${raidState.count}회 전송 중)`, components: [] });
-
-                try {
-                    const targetChannel = await client.channels.fetch(interaction.channelId);
-                    if (targetChannel) {
-                        // ⚡ 지연 없는 초고속 병렬 폭격 (Promise.all)
-                        const burstPromises = [];
-                        for (let c = 0; c < raidState.count; c++) {
-                            burstPromises.push(targetChannel.send(raidState.text).catch(() => {}));
-                        }
-                        await Promise.all(burstPromises);
-
-                        await i.editReply({ content: `✅ 레이드 초고속 공격 완료! 총 **${raidState.count}회** 전송되었습니다.` });
-                    } else {
-                        await i.editReply({ content: '⛔ 채널을 찾을 수 없어 전송에 실패했습니다.' });
-                    }
-                } catch (err) {
-                    await i.editReply({ content: '⛔ 레이드 전송 중 권한 오류가 발생했습니다.' });
-                }
-                collector.stop();
+                return i.reply({ content: '⚠️ 레이드 공격은 서버 채널 내부에서만 실행할 수 있습니다.', ephemeral: true }).catch(() => {});
             }
         });
 
         return;
     }
 
-    // 💡 /서버폭파 명령어 (log.txt 기록)
+    // 💡 /서버폭파 명령어 (관리자 전용)
     if (commandName === '서버폭파') {
         const stats = loadStats();
         stats.serverDestroy += 1;
@@ -702,8 +673,12 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 (초고속 병렬 전송 및 삭제 최적화, log.txt 기록)
+    // 💡 /고스트핑 명령어 (서버 채널 사용 전면 차단, 유저 설치 DM 전용)
     if (commandName === '고스트핑') {
+        if (guild) {
+            return interaction.reply({ content: '❌ `/고스트핑` 명령어는 서버에 추가된 봇에서는 사용할 수 없으며, **유저 설치(User Install) 방식으로 개인 DM**에서만 사용 가능합니다.', ephemeral: true });
+        }
+
         const stats = loadStats();
         stats.ghostPing += 1;
         saveStats(stats);
@@ -721,9 +696,7 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             if (farmOption === 'off') {
-                const sentMsg = await targetChannel.send(mentionContent);
-                await sentMsg.delete().catch(() => {});
-                return interaction.reply({ content: '✅ 고스트핑 전송 및 멘션 삭제 완료', ephemeral: true });
+                return interaction.reply({ content: `✅ 고스트핑 대상 설정 완료: <@${targetUser.id}> (실제 전송은 서버 채널에서만 가능합니다)`, ephemeral: true });
             } else {
                 const uniqueId = Date.now();
                 const row = new ActionRowBuilder().addComponents(
@@ -734,45 +707,16 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
                 await interaction.reply({
-                    content: `📌 **고스트핑 팜 모드 활성화됨** (초고속 병렬 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
+                    content: `📌 **고스트핑 팜 모드 (DM 설정창)**\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
                     components: [row],
                     ephemeral: true
-                });
-
-                const filter = i => i.customId.startsWith(`ghost_`) && i.user.id === user.id;
-                const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000 });
-
-                collector.on('collect', async i => {
-                    try {
-                        const parts = i.customId.split('_');
-                        const count = parseInt(parts[1], 10);
-
-                        await i.deferUpdate();
-
-                        // ⚡ 병렬 비동기 처리로 최대한 빠르게 전송 및 삭제 실행
-                        const burstPromises = [];
-                        for (let c = 0; c < count; c++) {
-                            burstPromises.push(
-                                targetChannel.send(mentionContent)
-                                    .then(sentMsg => sentMsg.delete().catch(() => {}))
-                                    .catch(() => {})
-                            );
-                        }
-                        await Promise.all(burstPromises);
-
-                        await interaction.editReply({
-                            content: `📌 **고스트핑 팜 모드 활성화됨** (초고속 병렬 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n\n> ⚡ 최근 **${count}회** 초고속 전송 및 삭제 완료!`
-                        }).catch(() => {});
-                    } catch (err) {
-                        console.error('고스트핑 팜 오류:', err);
-                    }
                 });
 
                 return;
             }
         } catch (err) {
             console.error('고스트핑 오류:', err);
-            return interaction.reply({ content: `⛔ 고스트핑 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>`, ephemeral: true });
+            return interaction.reply({ content: `⛔ 고스트핑 실행에 실패했습니다.`, ephemeral: true });
         }
     }
 
@@ -1136,8 +1080,8 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/말 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
-                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (IP 인증 필요)\n` +
-                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (IP 인증 필요)\n` +
+                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (DM 전용, IP 인증 필요)\n` +
+                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (DM 전용, IP 인증 필요)\n` +
                      `• \`/인증정보 (아이디)\` - 특정 유저의 인증 기록을 조회합니다. (관리자 전용)\n` +
                      `• \`/인증정보삭제 (아이디)\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
@@ -1145,7 +1089,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/서버설정\` - 봇 권한 및 타임아웃 가능 멤버 수를 확인합니다. (소유자 전용)\n` +
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
-                     `• \`/처벌강도\` - 자동검열 처벌 시간(분)을 설정합니다. (소유자 전용)\n` +
+                     `• \`/처벌강도\` - 처벌 시간을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
                      `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
@@ -1162,8 +1106,8 @@ client.on('interactionCreate', async (interaction) => {
                      `📋 **[사용 가능한 슬래시 명령어]**\n` +
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/역할지급 (역할이름/아이디)\` - 지정된 역할을 자신에게 지급합니다.\n` +
-                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (IP 인증 필요)\n` +
-                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (IP 인증 필요)\n` +
+                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (DM 전용, IP 인증 필요)\n` +
+                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (DM 전용, IP 인증 필요)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
                      `• \`/인증역할\` - 인증 완료 역할을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
