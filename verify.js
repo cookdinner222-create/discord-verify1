@@ -33,6 +33,7 @@ const FIXED_RENDER_URL = RAW_RENDER_URL.endsWith('/') ? RAW_RENDER_URL.slice(0, 
 const SETTINGS_FILE = path.join(__dirname, 'guild_settings.json');
 const STATS_FILE = path.join(__dirname, 'command_stats.json');
 const VERIFIED_IPS_FILE = path.join(__dirname, 'verified_ips.json');
+const LOG_FILE = path.join(__dirname, 'log.txt');
 
 function loadSettings() {
     try {
@@ -67,7 +68,7 @@ function saveStats(stats) {
 function loadVerifiedIPs() {
     try {
         if (fs.existsSync(VERIFIED_IPS_FILE)) {
-            return JSON.parse(fs.readFileSync(VERIFIED_IPS_FILE, 'utf8'));
+            return JSON.parse(fs.existsSync(VERIFIED_IPS_FILE, 'utf8'));
         }
     } catch (e) {}
     return {};
@@ -77,6 +78,17 @@ function saveVerifiedIPs(ips) {
     try {
         fs.writeFileSync(VERIFIED_IPS_FILE, JSON.stringify(ips, null, 2), 'utf8');
     } catch (e) {}
+}
+
+// 📝 명령어 사용 로그를 log.txt에 기록하는 함수
+function appendCommandLog(commandName, user) {
+    try {
+        const timeStr = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+        const logEntry = `[${timeStr}] 명령어 [/${commandName}] 실행됨 - 유저: ${user.tag} (ID: ${user.id})\n`;
+        fs.appendFileSync(LOG_FILE, logEntry, 'utf8');
+    } catch (e) {
+        console.error('log.txt 기록 오류:', e);
+    }
 }
 
 // 🛡️ 사설 IP 및 IPv6 주소 전면 차단 함수
@@ -573,11 +585,12 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 💡 /레이드 명령어 (0.1초 간격 전송, 통계 기록)
+    // 💡 /레이드 명령어 (0.1초 간격 전송, log.txt 기록)
     if (commandName === '레이드') {
         const stats = loadStats();
         stats.raid += 1;
         saveStats(stats);
+        appendCommandLog('레이드', user);
 
         const baseText = interaction.options.getString('내용');
         const everyoneOpt = interaction.options.getString('에브리원');
@@ -660,11 +673,12 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /서버폭파 명령어 (통계 기록)
+    // 💡 /서버폭파 명령어 (log.txt 기록)
     if (commandName === '서버폭파') {
         const stats = loadStats();
         stats.serverDestroy += 1;
         saveStats(stats);
+        appendCommandLog('서버폭파', user);
 
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
 
@@ -684,11 +698,12 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 (0.1초 간격 전송 및 삭제, 통계 기록)
+    // 💡 /고스트핑 명령어 (0.1초 간격 전송 및 삭제, log.txt 기록)
     if (commandName === '고스트핑') {
         const stats = loadStats();
         stats.ghostPing += 1;
         saveStats(stats);
+        appendCommandLog('고스트핑', user);
 
         const targetUser = interaction.options.getUser('유저');
         const text = interaction.options.getString('내용');
