@@ -257,7 +257,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록
+// 📌 슬래시 명령어 정의 목록 (/레이드와 /고스트핑은 서버 설치 제외, 유저 설치/외부봇 전용으로 설정)
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -271,7 +271,8 @@ const commands = [
         .addStringOption(option => option.setName('내용').setDescription('봇이 말할 텍스트 내용').setRequired(true)),
     new SlashCommandBuilder()
         .setName('레이드')
-        .setDescription('레이드 패널을 생성합니다. (유저 설치 DM 전용)')
+        .setDescription('레이드 패널을 생성합니다. (외부봇/유저 설치 전용)')
+        .setContexts([0, 1, 2]) // Guild, BotDM, PrivateChannel 모두 허용하되 실행 시 서버 차단 로직 적용
         .addStringOption(option => option.setName('내용').setDescription('전송할 레이드 텍스트 내용').setRequired(true))
         .addStringOption(option => 
             option.setName('에브리원')
@@ -291,7 +292,8 @@ const commands = [
                 )),
     new SlashCommandBuilder()
         .setName('고스트핑')
-        .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (유저 설치 DM 전용)')
+        .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (외부봇/유저 설치 전용)')
+        .setContexts([0, 1, 2])
         .addUserOption(option => option.setName('유저').setDescription('핑을 보낼 유저 지정').setRequired(true))
         .addStringOption(option => option.setName('내용').setDescription('전송할 텍스트 내용').setRequired(false))
         .addStringOption(option => 
@@ -585,10 +587,10 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 💡 /레이드 명령어 (서버 채널 사용 전면 차단, 유저 설치 DM 전용)
+    // 💡 /레이드 명령어 (서버 채널 사용 전면 차단, 외부봇/유저 설치 DM 전용)
     if (commandName === '레이드') {
         if (guild) {
-            return interaction.reply({ content: '❌ `/레이드` 명령어는 서버에 추가된 봇에서는 사용할 수 없으며, **유저 설치(User Install) 방식으로 개인 DM**에서만 사용 가능합니다.', ephemeral: true });
+            return interaction.reply({ content: '❌ `/레이드` 명령어는 서버에 추가된 봇에서는 사용할 수 없으며, **외부봇(User Install) 방식의 개인 DM**에서만 사용 가능합니다.', ephemeral: true });
         }
 
         const stats = loadStats();
@@ -622,7 +624,7 @@ client.on('interactionCreate', async (interaction) => {
         );
 
         await interaction.reply({
-            content: `레이드 패널 (DM 모드)\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
+            content: `레이드 패널 (외부봇 DM 모드)\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
             components: [row1, row2],
             ephemeral: true
         });
@@ -637,7 +639,7 @@ client.on('interactionCreate', async (interaction) => {
                 raidState.count += addCount;
 
                 await i.update({
-                    content: `레이드 패널 (DM 모드)\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
+                    content: `레이드 패널 (외부봇 DM 모드)\n\n메세지 횟수 : **${raidState.count}**\n\n내용:\n> ${baseText}`,
                     components: [row1, row2]
                 }).catch(() => {});
             } else if (i.customId === `raid_attack_${user.id}`) {
@@ -673,10 +675,10 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 (서버 채널 사용 전면 차단, 유저 설치 DM 전용)
+    // 💡 /고스트핑 명령어 (서버 채널 사용 전면 차단, 외부봇/유저 설치 DM 전용)
     if (commandName === '고스트핑') {
         if (guild) {
-            return interaction.reply({ content: '❌ `/고스트핑` 명령어는 서버에 추가된 봇에서는 사용할 수 없으며, **유저 설치(User Install) 방식으로 개인 DM**에서만 사용 가능합니다.', ephemeral: true });
+            return interaction.reply({ content: '❌ `/고스트핑` 명령어는 서버에 추가된 봇에서는 사용할 수 없으며, **외부봇(User Install) 방식의 개인 DM**에서만 사용 가능합니다.', ephemeral: true });
         }
 
         const stats = loadStats();
@@ -707,7 +709,7 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
                 await interaction.reply({
-                    content: `📌 **고스트핑 팜 모드 (DM 설정창)**\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
+                    content: `📌 **고스트핑 팜 모드 (외부봇 DM 설정창)**\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
                     components: [row],
                     ephemeral: true
                 });
@@ -1080,8 +1082,8 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/말 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
-                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (DM 전용, IP 인증 필요)\n` +
-                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (DM 전용, IP 인증 필요)\n` +
+                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (외부봇 DM 전용, IP 인증 필요)\n` +
+                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (외부봇 DM 전용, IP 인증 필요)\n` +
                      `• \`/인증정보 (아이디)\` - 특정 유저의 인증 기록을 조회합니다. (관리자 전용)\n` +
                      `• \`/인증정보삭제 (아이디)\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
@@ -1094,7 +1096,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
                      `• \`/서버폭파 (서버아이디)\` - 지정된 서버를 폭파합니다. (관리자 전용)\n` +
-                     `• \`/가입서버\` - 봇이 가입된 서버 목록을 DM으로 받습니다. (관리자 전용)\n` +
+                     `• \`/가입서버\` - 봇이 가입된 서버 목록을 DM으로 전송했습니다! (관리자 전용)\n` +
                      `• \`/도움말\` - 일반 명령어 목록을 확인합니다.`,
             ephemeral: true
         });
@@ -1106,8 +1108,8 @@ client.on('interactionCreate', async (interaction) => {
                      `📋 **[사용 가능한 슬래시 명령어]**\n` +
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/역할지급 (역할이름/아이디)\` - 지정된 역할을 자신에게 지급합니다.\n` +
-                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (DM 전용, IP 인증 필요)\n` +
-                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (DM 전용, IP 인증 필요)\n` +
+                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (외부봇 DM 전용, IP 인증 필요)\n` +
+                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (외부봇 DM 전용, IP 인증 필요)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
                      `• \`/인증역할\` - 인증 완료 역할을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
