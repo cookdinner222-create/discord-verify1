@@ -1112,30 +1112,41 @@ app.get('/callback', async (req, res) => {
             }
         } catch (err) {}
 
+        // 🌐 모바일 데이터 및 유동 IP(동적/호스팅 ISP) 완벽 차단 로직
         try {
-            const mobileCheckRes = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org`);
-            if (mobileCheckRes.data.status === 'success') {
-                const isp = (mobileCheckRes.data.isp || '').toLowerCase();
-                const org = (mobileCheckRes.data.org || '').toLowerCase();
+            const ipCheckDetails = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org,mobile,hosting`);
+            if (ipCheckDetails.data.status === 'success') {
+                const isp = (ipCheckDetails.data.isp || '').toLowerCase();
+                const org = (ipCheckDetails.data.org || '').toLowerCase();
+                const isMobileFlag = ipCheckDetails.data.mobile === true;
+                const isHostingFlag = ipCheckDetails.data.hosting === true;
 
-                const isMobileData = isp.includes('sk telecom') || isp.includes('kt') || isp.includes('lg uplus') || 
+                const isMobileData = isMobileFlag || 
+                                     isp.includes('sk telecom') || isp.includes('kt') || isp.includes('lg uplus') || 
                                      isp.includes('mobile') || org.includes('mobile') || org.includes('cellular') ||
                                      isp.includes('SKT') || isp.includes('KT') || isp.includes('LGU+');
 
-                if (isMobileData) {
+                // 유동 IP / 데이터센터 / 호스팅 대역 감지
+                const isDynamicOrHosting = isHostingFlag || 
+                                           org.includes('hosting') || org.includes('cloud') || org.includes('vps') || 
+                                           org.includes('amazon') || org.includes('oracle') || org.includes('google') ||
+                                           org.includes('microsoft') || org.includes('digitalocean') || org.includes('hetzner');
+
+                if (isMobileData || isDynamicOrHosting) {
+                    const blockReason = isMobileData ? '모바일 데이터(LTE/5G)' : '유동 IP / 클라우드/호스팅';
                     for (const chId of logChannelIdsToSend) {
                         const logChan = await client.channels.fetch(chId).catch(() => null);
                         if (logChan) {
                             await logChan.send({
-                                content: `🚨 **[모바일 데이터 차단 적발]**\n` +
+                                content: `🚨 **[접속 차단 적발]**\n` +
                                          `👤 **적발된 유저:** <@${userId}> (\`${username}\`)\n` +
                                          `🌐 **IP:** \`${userIp}\`\n` +
-                                         `📡 **통신사/ISP:** \`${mobileCheckRes.data.isp || '알 수 없음'}\`\n` +
-                                         `⚠️ 모바일 데이터(LTE/5G) 환경에서는 인증을 진행할 수 없어 차단되었습니다.`
+                                         `📡 **통신사/ISP:** \`${ipCheckDetails.data.isp || '알 수 없음'}\`\n` +
+                                         `⚠️ ${blockReason} 환경(모바일/유동IP)에서는 인증을 진행할 수 없어 차단되었습니다.`
                             }).catch(() => {});
                         }
                     }
-                    return res.status(403).send(getStyledPage('모바일 데이터 차단', `<b>${username}</b>님, 모바일 데이터(LTE/5G) 환경에서는 인증을 진행할 수 없습니다.<br>와이파이(Wi-Fi)에 연결한 후 다시 시도해 주세요.`, 'block', serverName, serverIcon));
+                    return res.status(403).send(getStyledPage('접속 차단됨', `<b>${username}</b>님, ${blockReason} 환경에서는 인증을 진행할 수 없습니다.<br>일반 가정용 와이파이(Wi-Fi)나 고정 네트워크를 이용해 주세요.`, 'block', serverName, serverIcon));
                 }
             }
         } catch (err) {}
