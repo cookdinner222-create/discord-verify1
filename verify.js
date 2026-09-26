@@ -214,7 +214,7 @@ function parseDevice(ua) {
     return { browser, os };
 }
 
-// 📌 슬래시 명령어 정의 목록 (/고스트핑 옵션 선택사항 변경 완료)
+// 📌 슬래시 명령어 정의 목록
 const commands = [
     new SlashCommandBuilder().setName('서버정보').setDescription('현재 서버의 상세 정보를 확인합니다.'),
     new SlashCommandBuilder().setName('서버역할').setDescription('현재 서버의 모든 역할 이름과 ID를 나만 보이게 확인합니다. (관리자 전용)'),
@@ -479,22 +479,25 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 💡 /고스트핑 명령어 (내용/팜 선택사항 적용, DM 및 서버 채널 모두 지원)
+    // 💡 /고스트핑 명령어 (내용 생략 시 순수 멘션만 전송 후 삭제)
     if (commandName === '고스트핑') {
         if (!isBotOwner) return interaction.reply({ content: '❌ 이 명령어는 최고 관리자만 사용할 수 있습니다.', ephemeral: true });
 
         const targetUser = interaction.options.getUser('유저');
-        const text = interaction.options.getString('내용') || '고스트핑'; // 내용이 없으면 기본값 적용
-        const farmOption = interaction.options.getString('팜') || 'off'; // 팜이 없으면 off 적용
+        // 내용이 없으면 내용 없이 순수 멘션(<@유저ID>)만 구성
+        const text = interaction.options.getString('내용');
+        const mentionContent = text ? `<@${targetUser.id}>${text}` : `<@${targetUser.id}>`;
+        
+        const farmOption = interaction.options.getString('팜') || 'off';
 
         try {
             const targetChannel = await client.channels.fetch(interaction.channelId);
             if (!targetChannel) {
-                return interaction.reply({ content: `⛔ 채널을 찾을 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
+                return interaction.reply({ content: `⛔ 채널을 찾을 수 없습니다.\n\n**[대상 유저]** <@${targetUser.id}>`, ephemeral: true });
             }
 
             if (farmOption === 'off') {
-                const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
+                const sentMsg = await targetChannel.send(mentionContent);
                 await sentMsg.delete().catch(() => {});
                 return interaction.reply({ content: '✅ 고스트핑 전송 및 멘션 삭제 완료', ephemeral: true });
             } else {
@@ -507,7 +510,7 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
                 await interaction.reply({
-                    content: `📌 **팜 모드 활성화됨**\n대상 유저: <@${targetUser.id}>\n내용: \`${text}\`\n아래 버튼을 눌러 전송 횟수를 선택하세요.`,
+                    content: `📌 **팜 모드 활성화됨**\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n아래 버튼을 눌러 전송 횟수를 선택하세요.`,
                     components: [row],
                     ephemeral: true
                 });
@@ -523,7 +526,7 @@ client.on('interactionCreate', async (interaction) => {
                         await i.update({ content: `🚀 팜 모드 작동 중... (${count}회 반복 실행)`, components: [] });
 
                         for (let c = 0; c < count; c++) {
-                            const sentMsg = await targetChannel.send(`<@${targetUser.id}>${text}`);
+                            const sentMsg = await targetChannel.send(mentionContent);
                             await sentMsg.delete().catch(() => {});
                             await new Promise(resolve => setTimeout(resolve, 300));
                         }
@@ -531,7 +534,7 @@ client.on('interactionCreate', async (interaction) => {
                         await i.editReply({ content: `✅ 고스트핑 팜 (${count}회) 전송 및 멘션 삭제가 완료되었습니다!` });
                     } catch (err) {
                         console.error('고스트핑 팜 오류:', err);
-                        await i.editReply({ content: `⛔ 팜 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, components: [] }).catch(() => {});
+                        await i.editReply({ content: `⛔ 팜 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>`, components: [] }).catch(() => {});
                     }
                 });
 
@@ -539,7 +542,7 @@ client.on('interactionCreate', async (interaction) => {
             }
         } catch (err) {
             console.error('고스트핑 오류:', err);
-            return interaction.reply({ content: `⛔ 고스트핑 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>\n**[내용]** ${text}`, ephemeral: true });
+            return interaction.reply({ content: `⛔ 고스트핑 전송에 실패했습니다.\n\n**[대상 유저]** <@${targetUser.id}>`, ephemeral: true });
         }
     }
 
