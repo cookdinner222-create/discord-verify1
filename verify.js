@@ -6,6 +6,9 @@ const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle,
 
 const app = express();
 
+// 🌐 IPv6 주소 및 프록시 환경에서 IPv4만 허용하도록 설정
+app.set('trust proxy', false);
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -91,11 +94,12 @@ function appendCommandLog(commandName, user) {
     }
 }
 
-// 🛡️ 사설 IP 및 IPv6 주소 전면 차단 함수
+// 🛡️ 사설 IP 및 IPv6 주소 전면 차단 함수 (콜론 포함 시 무조건 차단)
 function isPrivateIP(ip) {
     if (!ip) return true;
-    if (ip.includes(':')) return true; // IPv6 차단
-    if (ip === '::1' || ip === '127.0.0.1' || ip.startsWith('::ffff:127.')) return true;
+    if (ip.includes(':')) return true; // IPv6 전면 차단
+
+    if (ip === '127.0.0.1' || ip.startsWith('127.')) return true;
 
     const parts = ip.split('.').map(Number);
     if (parts.length === 4) {
@@ -389,7 +393,6 @@ client.on('ready', async () => {
         console.error('슬래시 명령어 등록 실패:', error);
     }
 
-    // 1분마다 통계 메시지 자동 갱신 타이머 실행 (1분 = 60,000ms)
     setInterval(updateStatsMessage, 60000);
     updateStatsMessage();
 });
@@ -560,7 +563,7 @@ client.on('interactionCreate', async (interaction) => {
                 new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('🌐 웹에서 IP 인증 진행하기').setURL(verifyLinkUrl)
             );
             return interaction.reply({
-                content: `🔒 **[IP 인증 필수]**\n봇의 모든 명령어를 사용하려면 먼저 아래 버튼을 눌러 웹 인증(모바일/유동IP 차단 검증)을 완료해 주세요!`,
+                content: `🔒 **[IP 인증 필수]**\n봇의 모든 명령어를 사용하려면 먼저 아래 버튼을 눌러 웹 인증(모바일/유동IP/IPv6 차단 검증)을 완료해 주세요!`,
                 components: [row],
                 ephemeral: true
             });
