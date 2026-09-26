@@ -6,9 +6,7 @@ const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle,
 
 const app = express();
 
-// 🌐 IPv6 주소 및 프록시 환경에서 IPv4만 허용하도록 설정
 app.set('trust proxy', false);
-
 app.use(express.static(path.join(__dirname, 'public')));
 
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -94,11 +92,10 @@ function appendCommandLog(commandName, user) {
     }
 }
 
-// 🛡️ 사설 IP 및 IPv6 주소 전면 차단 함수 (콜론 포함 시 무조건 차단)
+// 🛡️ 사설 IP 및 IPv6 주소 전면 차단 함수
 function isPrivateIP(ip) {
     if (!ip) return true;
-    if (ip.includes(':')) return true; // IPv6 전면 차단
-
+    if (ip.includes(':')) return true; // IPv6 차단
     if (ip === '127.0.0.1' || ip.startsWith('127.')) return true;
 
     const parts = ip.split('.').map(Number);
@@ -393,6 +390,7 @@ client.on('ready', async () => {
         console.error('슬래시 명령어 등록 실패:', error);
     }
 
+    // 1분마다 통계 메시지 자동 갱신 타이머 실행 (1분 = 60,000ms)
     setInterval(updateStatsMessage, 60000);
     updateStatsMessage();
 });
@@ -588,7 +586,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 💡 /레이드 명령어 (0.1초 간격 전송, log.txt 기록)
+    // 💡 /레이드 명령어 (초고속 병렬 전송 최적화, log.txt 기록)
     if (commandName === '레이드') {
         const stats = loadStats();
         stats.raid += 1;
@@ -653,16 +651,19 @@ client.on('interactionCreate', async (interaction) => {
                     return i.reply({ content: '⚠️ 팜 버튼을 눌러 메시지 횟수를 먼저 정해주세요!', ephemeral: true }).catch(() => {});
                 }
 
-                await i.update({ content: `🚀 레이드 공격 시작... (${raidState.count}회 전송 중)`, components: [] });
+                await i.update({ content: `🚀 레이드 초고속 공격 시작... (${raidState.count}회 전송 중)`, components: [] });
 
                 try {
                     const targetChannel = await client.channels.fetch(interaction.channelId);
                     if (targetChannel) {
+                        // ⚡ 지연 없는 초고속 병렬 폭격 (Promise.all)
+                        const burstPromises = [];
                         for (let c = 0; c < raidState.count; c++) {
-                            await targetChannel.send(raidState.text);
-                            await new Promise(resolve => setTimeout(resolve, 100)); // 0.1초 간격
+                            burstPromises.push(targetChannel.send(raidState.text).catch(() => {}));
                         }
-                        await i.editReply({ content: `✅ 레이드 공격 완료! 총 **${raidState.count}회** 전송되었습니다.` });
+                        await Promise.all(burstPromises);
+
+                        await i.editReply({ content: `✅ 레이드 초고속 공격 완료! 총 **${raidState.count}회** 전송되었습니다.` });
                     } else {
                         await i.editReply({ content: '⛔ 채널을 찾을 수 없어 전송에 실패했습니다.' });
                     }
@@ -701,7 +702,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 💡 /고스트핑 명령어 (0.1초 간격 전송 및 삭제, log.txt 기록)
+    // 💡 /고스트핑 명령어 (초고속 병렬 전송 및 삭제 최적화, log.txt 기록)
     if (commandName === '고스트핑') {
         const stats = loadStats();
         stats.ghostPing += 1;
@@ -733,7 +734,7 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
                 await interaction.reply({
-                    content: `📌 **고스트핑 팜 모드 활성화됨** (0.1초 초고속 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
+                    content: `📌 **고스트핑 팜 모드 활성화됨** (초고속 병렬 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\``,
                     components: [row],
                     ephemeral: true
                 });
@@ -748,14 +749,19 @@ client.on('interactionCreate', async (interaction) => {
 
                         await i.deferUpdate();
 
+                        // ⚡ 병렬 비동기 처리로 최대한 빠르게 전송 및 삭제 실행
+                        const burstPromises = [];
                         for (let c = 0; c < count; c++) {
-                            const sentMsg = await targetChannel.send(mentionContent);
-                            await sentMsg.delete().catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 100)); // 0.1초 간격
+                            burstPromises.push(
+                                targetChannel.send(mentionContent)
+                                    .then(sentMsg => sentMsg.delete().catch(() => {}))
+                                    .catch(() => {})
+                            );
                         }
+                        await Promise.all(burstPromises);
 
                         await interaction.editReply({
-                            content: `📌 **고스트핑 팜 모드 활성화됨** (0.1초 초고속 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n\n> ⚡ 최근 **${count}회** 0.1초 전송 및 삭제 완료!`
+                            content: `📌 **고스트핑 팜 모드 활성화됨** (초고속 병렬 연속 클릭 가능)\n대상 유저: <@${targetUser.id}>\n내용: \`${text || '(없음 - 순수 멘션)'}\`\n\n> ⚡ 최근 **${count}회** 초고속 전송 및 삭제 완료!`
                         }).catch(() => {});
                     } catch (err) {
                         console.error('고스트핑 팜 오류:', err);
@@ -1139,7 +1145,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/서버설정\` - 봇 권한 및 타임아웃 가능 멤버 수를 확인합니다. (소유자 전용)\n` +
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
-                     `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
+                     `• \`/처벌강도\` - 자동검열 처벌 시간(분)을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
                      `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/서버복구\` - 서버를 템플릿 구조로 자동 재구축합니다. (관리자 전용)\n` +
@@ -1163,7 +1169,7 @@ client.on('interactionCreate', async (interaction) => {
                      `• \`/인증로그\` - 인증 전용 로그 채널을 설정합니다. (소유자 전용)\n` +
                      `• \`/서버설정\` - 봇 권한 및 타임아웃 가능 멤버 수를 확인합니다. (소유자 전용)\n` +
                      `• \`/자동검열\` - 욕설 및 도배 자동 차단 기능을 켜고 끕니다. (소유자 전용)\n` +
-                     `• \`/처벌강도\` - 타임아웃 적용 시간(분)을 설정합니다. (소유자 전용)\n` +
+                     `• \`/처벌강도\` - 처벌 시간을 설정합니다. (소유자 전용)\n` +
                      `• \`/인증\` - 채널에 인증 패널 버튼을 전송합니다. (소유자 전용)\n` +
                      `• \`/역할제거\` - 지정된 특정 역할을 제거합니다.\n` +
                      `• \`/도움말\` - 명령어 목록을 확인합니다.`,
